@@ -71,7 +71,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: android
+          name: dist-android
           path: |
             kompact-*-android-universal.apk
             kompact-*-android-play.aab
@@ -107,7 +107,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ios
+          name: dist-ios
           path: kompact-*-ios-unsigned.ipa
           if-no-files-found: error
 
@@ -144,7 +144,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: dist-linux
           path: kompact-*-linux-x64.zip
           if-no-files-found: error
 
@@ -177,7 +177,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows
+          name: dist-windows
           path: kompact-*-windows-x64.zip
           if-no-files-found: error
 
@@ -209,7 +209,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos
+          name: dist-macos
           path: kompact-*-macos.zip
           if-no-files-found: error
 
@@ -239,7 +239,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: web-zip
+          name: dist-web
           path: kompact-*-web.zip
           if-no-files-found: error
 
@@ -286,6 +286,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: dist-*
           merge-multiple: true
 
       - name: List artifacts
