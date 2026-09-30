@@ -10,6 +10,7 @@ import 'screens/drivers_screen.dart';
 import 'screens/fleet_screen.dart';
 import 'screens/fuel_screen.dart';
 import 'screens/insights_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/maintenance_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/settings_screen.dart';
@@ -28,13 +29,25 @@ class KompactApp extends StatelessWidget {
       _ => ThemeMode.system,
     };
 
+    if (!state.loaded) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        home: Scaffold(
+          backgroundColor: KPallette.light.bg,
+          body: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+      );
+    }
+
     return MaterialApp(
       title: 'Kompact — Fleet Management',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       theme: AppTheme.light(state.settings.accentIndex, state.settings.densityIndex == 0),
       darkTheme: AppTheme.dark(state.settings.accentIndex, state.settings.densityIndex == 0),
-      home: const HomeShell(),
+      home: state.signedIn ? const HomeShell() : const LoginScreen(),
     );
   }
 }
@@ -197,17 +210,6 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-
-    if (!state.loaded) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
-        home: const Scaffold(
-          body: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-        ),
-      );
-    }
 
     // Role switches always land on that role's dashboard.
     if (_lastRole != state.role) {

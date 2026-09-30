@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/fleet_state.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 import 'role_picker.dart';
@@ -80,6 +82,7 @@ class AdaptiveScaffold extends StatefulWidget {
 class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
   /// null → follow window width; otherwise the user-pinned rail mode.
   bool? _pinnedExpanded;
+  final MenuController _accountMenu = MenuController();
 
   @override
   Widget build(BuildContext context) {
@@ -245,71 +248,84 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
     final rc = widget.roleContext;
     final color = roleColor(context, rc.role);
 
-    final card = Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _openRolePicker(context),
-        borderRadius: BorderRadius.circular(K.rSm),
-        hoverColor: p.surfaceAlt,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            expanded ? K.xs : (K.railWidthCollapsed - 30) / 2,
-            K.xs + 1,
-            expanded ? K.xs : (K.railWidthCollapsed - 30) / 2,
-            K.xs + 1,
-          ),
-          child: Row(
-            mainAxisAlignment: expanded ? MainAxisAlignment.start : MainAxisAlignment.center,
-            children: [
-              RoleBadge(role: rc.role, size: expanded ? 28 : 30, color: color),
-              if (expanded) ...[
-                const SizedBox(width: K.sm + 1),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        rc.userName,
-                        style: TextStyle(
-                          fontSize: K.body,
-                          fontWeight: FontWeight.w700,
-                          color: p.text,
-                          fontFamily: 'Inter',
+    // Account card → popover menu with in-session role switching and
+    // sign-out back to the login screen.
+    final card = MenuAnchor(
+      controller: _accountMenu,
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(p.surface),
+        side: WidgetStatePropertyAll(BorderSide(color: p.border)),
+        elevation: const WidgetStatePropertyAll(6),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+      ),
+      alignmentOffset: const Offset(0, K.xs),
+      menuChildren: [_accountMenuPanel(context, rc)],
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _accountMenu.isOpen ? _accountMenu.close() : _accountMenu.open(),
+          borderRadius: BorderRadius.circular(K.rSm),
+          hoverColor: p.surfaceAlt,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              expanded ? K.xs : (K.railWidthCollapsed - 30) / 2,
+              K.xs + 1,
+              expanded ? K.xs : (K.railWidthCollapsed - 30) / 2,
+              K.xs + 1,
+            ),
+            child: Row(
+              mainAxisAlignment: expanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+              children: [
+                RoleBadge(role: rc.role, size: expanded ? 28 : 30, color: color),
+                if (expanded) ...[
+                  const SizedBox(width: K.sm + 1),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          rc.userName,
+                          style: TextStyle(
+                            fontSize: K.body,
+                            fontWeight: FontWeight.w700,
+                            color: p.text,
+                            fontFamily: 'Inter',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 1),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 5,
-                            height: 5,
-                            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-                          ),
-                          const SizedBox(width: K.xs + 1),
-                          Flexible(
-                            child: Text(
-                              rc.role.label,
-                              style: TextStyle(
-                                fontSize: K.caption,
-                                fontWeight: FontWeight.w600,
-                                color: color,
-                                fontFamily: 'Inter',
-                              ),
-                              maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                        const SizedBox(height: 1),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 5,
+                              height: 5,
+                              decoration: BoxDecoration(shape: BoxShape.circle, color: color),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                            const SizedBox(width: K.xs + 1),
+                            Flexible(
+                              child: Text(
+                                rc.role.label,
+                                style: TextStyle(
+                                  fontSize: K.caption,
+                                  fontWeight: FontWeight.w600,
+                                  color: color,
+                                  fontFamily: 'Inter',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Icon(Icons.expand_more_rounded, size: 14, color: p.textTertiary),
+                  Icon(Icons.expand_more_rounded, size: 14, color: p.textTertiary),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -330,7 +346,167 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: K.xs + 1),
-      child: Tooltip(message: '${rc.userName} · ${rc.role.label}\nSwitch workspace', child: card),
+      child: Tooltip(message: '${rc.userName} · ${rc.role.label}\nAccount menu', child: card),
+    );
+  }
+
+  /// Account popover: identity header, role quick-switch grid, sign-out.
+  Widget _accountMenuPanel(BuildContext context, RoleContext rc) {
+    final p = context.pal;
+    final state = context.read<AppState>();
+    final user = state.currentUser;
+    final color = roleColor(context, rc.role);
+
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Identity header.
+          Padding(
+            padding: const EdgeInsets.all(K.md),
+            child: Row(
+              children: [
+                RoleBadge(role: rc.role, size: 32, color: color),
+                const SizedBox(width: K.sm + 2),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user?.name ?? rc.userName,
+                        style: TextStyle(
+                          fontSize: K.subtitle,
+                          fontWeight: FontWeight.w800,
+                          color: p.text,
+                          fontFamily: 'Inter',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        user?.email ?? '${rc.userName.toLowerCase().replaceAll(' ', '.')}@kompactfleet.io',
+                        style: TextStyle(
+                          fontSize: K.caption,
+                          color: p.textTertiary,
+                          fontFamily: 'Inter',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: p.border),
+
+          // Role quick-switch grid — compare dashboards without signing out.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(K.md, K.sm, K.md, K.xs),
+            child: Text(
+              'SWITCH WORKSPACE',
+              style: TextStyle(
+                fontSize: K.micro,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.9,
+                color: p.textTertiary,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: K.md),
+            child: Wrap(
+              spacing: K.xs + 1,
+              runSpacing: K.xs + 1,
+              children: [
+                for (final r in FleetRole.values)
+                  _roleChip(context, r, selected: r == rc.role),
+              ],
+            ),
+          ),
+          const SizedBox(height: K.sm),
+          Divider(height: 1, color: p.border),
+
+          // Sign out → login screen (switch user).
+          Padding(
+            padding: const EdgeInsets.all(K.sm),
+            child: InkWell(
+              onTap: () {
+                _accountMenu.close();
+                state.signOut();
+              },
+              borderRadius: BorderRadius.circular(K.rSm),
+              hoverColor: p.criticalSoft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: K.md, vertical: K.sm + 2),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(K.rSm),
+                  border: Border.all(color: p.critical.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, size: 14, color: p.critical),
+                    const SizedBox(width: K.sm + 1),
+                    Expanded(
+                      child: Text(
+                        'Sign out · switch user',
+                        style: TextStyle(
+                          fontSize: K.body,
+                          fontWeight: FontWeight.w700,
+                          color: p.critical,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _roleChip(BuildContext context, FleetRole r, {required bool selected}) {
+    final p = context.pal;
+    final color = roleColor(context, r);
+    return InkWell(
+      onTap: () {
+        _accountMenu.close();
+        context.read<AppState>().setRole(r);
+      },
+      borderRadius: BorderRadius.circular(K.rSm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: K.sm + 1, vertical: K.xs + 1),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.16) : p.surfaceAlt,
+          borderRadius: BorderRadius.circular(K.rSm),
+          border: Border.all(color: selected ? color.withValues(alpha: 0.6) : p.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(r.icon, size: 11, color: selected ? color : p.textTertiary),
+            const SizedBox(width: K.xs + 1),
+            Text(
+              r.shortLabel.toUpperCase(),
+              style: TextStyle(
+                fontSize: K.micro,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+                color: selected ? color : p.textSecondary,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -341,18 +517,19 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
     final icon = selected ? (d.selectedIcon ?? d.icon) : d.icon;
     final badge = d.badgeKey == null ? 0 : (widget.badgeCounts[d.badgeKey] ?? 0);
 
+    final roleC = roleColor(context, widget.roleContext.role);
     final tile = Padding(
       padding: EdgeInsets.symmetric(
         horizontal: expanded ? K.xs : (K.railWidthCollapsed - 38) / 2,
         vertical: 1,
       ),
       child: Material(
-        color: selected ? p.primarySoft : Colors.transparent,
+        color: selected ? roleC.withValues(alpha: 0.10) : Colors.transparent,
         borderRadius: BorderRadius.circular(K.rSm),
         child: InkWell(
           onTap: () => widget.onTap(index),
           borderRadius: BorderRadius.circular(K.rSm),
-          hoverColor: selected ? p.primarySoft : p.surfaceAlt,
+          hoverColor: selected ? roleC.withValues(alpha: 0.10) : p.surfaceAlt,
           child: Padding(
             padding: EdgeInsets.symmetric(
               horizontal: expanded ? K.xs + 1 : 0,
@@ -361,13 +538,13 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
             child: Row(
               mainAxisAlignment: expanded ? MainAxisAlignment.start : MainAxisAlignment.center,
               children: [
-                // Left accent indicator for the active module.
+                // Left accent indicator for the active module (role-tinted).
                 AnimatedContainer(
                   duration: K.fast,
                   width: 3,
                   height: selected ? 16 : 0,
                   decoration: BoxDecoration(
-                    color: p.primary,
+                    color: roleC,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -397,7 +574,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
                       style: TextStyle(
                         fontSize: K.body,
                         fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                        color: selected ? p.primary : p.textSecondary,
+                        color: selected ? roleC : p.textSecondary,
                         fontFamily: 'Inter',
                       ),
                       maxLines: 1,
@@ -538,7 +715,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
               child: Icon(
                 selected ? (d.selectedIcon ?? d.icon) : d.icon,
                 size: 19,
-                color: selected ? p.primary : p.textTertiary,
+                color: selected ? roleColor(context, widget.roleContext.role) : p.textTertiary,
               ),
             ),
             const SizedBox(height: 2),
@@ -547,7 +724,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
               style: TextStyle(
                 fontSize: K.caption,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? p.primary : p.textTertiary,
+                color: selected ? roleColor(context, widget.roleContext.role) : p.textTertiary,
                 fontFamily: 'Inter',
               ),
               maxLines: 1,
@@ -575,7 +752,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
                   ? (widget.destinations[widget.currentIndex].selectedIcon ?? widget.destinations[widget.currentIndex].icon)
                   : Icons.grid_view_rounded,
               size: 19,
-              color: anySelected ? p.primary : p.textTertiary,
+              color: anySelected ? roleColor(context, widget.roleContext.role) : p.textTertiary,
             ),
             const SizedBox(height: 2),
             Text(
@@ -614,54 +791,89 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Account section — switch workspace.
+              // Account section — switch workspace or sign out.
               Padding(
                 padding: const EdgeInsets.fromLTRB(K.lg, K.md, K.lg, K.xs),
-                child: InkWell(
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _openRolePicker(context);
-                  },
-                  borderRadius: BorderRadius.circular(K.rMd),
-                  child: Container(
-                    padding: const EdgeInsets.all(K.sm + 2),
-                    decoration: BoxDecoration(
-                      color: p.surfaceAlt,
-                      borderRadius: BorderRadius.circular(K.rMd),
-                      border: Border.all(color: p.border),
-                    ),
-                    child: Row(
-                      children: [
-                        RoleBadge(role: rc.role, size: 30, color: color),
-                        const SizedBox(width: K.sm + 2),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                child: Container(
+                  padding: const EdgeInsets.all(K.sm + 2),
+                  decoration: BoxDecoration(
+                    color: p.surfaceAlt,
+                    borderRadius: BorderRadius.circular(K.rMd),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Column(
+                    children: [
+                      InkWell(
+                        onTap: () {
+                          Navigator.pop(sheetContext);
+                          _openRolePicker(context);
+                        },
+                        borderRadius: BorderRadius.circular(K.rSm),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: K.xs + 1),
+                          child: Row(
                             children: [
-                              Text(
-                                rc.userName,
-                                style: TextStyle(
-                                  fontSize: K.subtitle,
-                                  fontWeight: FontWeight.w700,
-                                  color: p.text,
-                                  fontFamily: 'Inter',
+                              RoleBadge(role: rc.role, size: 30, color: color),
+                              const SizedBox(width: K.sm + 2),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      rc.userName,
+                                      style: TextStyle(
+                                        fontSize: K.subtitle,
+                                        fontWeight: FontWeight.w700,
+                                        color: p.text,
+                                        fontFamily: 'Inter',
+                                      ),
+                                    ),
+                                    Text(
+                                      '${rc.role.label} · tap to switch workspace',
+                                      style: TextStyle(
+                                        fontSize: K.caption,
+                                        fontWeight: FontWeight.w600,
+                                        color: color,
+                                        fontFamily: 'Inter',
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              Text(
-                                '${rc.role.label} · tap to switch workspace',
-                                style: TextStyle(
-                                  fontSize: K.caption,
-                                  fontWeight: FontWeight.w600,
-                                  color: color,
-                                  fontFamily: 'Inter',
+                              Icon(Icons.swap_horiz_rounded, size: 16, color: color),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Divider(height: 1, color: p.border),
+                      InkWell(
+                        onTap: () {
+                          Navigator.pop(sheetContext);
+                          context.read<AppState>().signOut();
+                        },
+                        borderRadius: BorderRadius.circular(K.rSm),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: K.xs + 1),
+                          child: Row(
+                            children: [
+                              Icon(Icons.logout_rounded, size: 16, color: p.critical),
+                              const SizedBox(width: K.sm + 2),
+                              Expanded(
+                                child: Text(
+                                  'Sign out · switch user',
+                                  style: TextStyle(
+                                    fontSize: K.body,
+                                    fontWeight: FontWeight.w700,
+                                    color: p.critical,
+                                    fontFamily: 'Inter',
+                                  ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Icon(Icons.swap_horiz_rounded, size: 16, color: color),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),

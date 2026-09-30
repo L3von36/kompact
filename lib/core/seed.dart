@@ -14,6 +14,8 @@ class SeedData {
   final List<FuelEvent> fuelEvents;
   final List<Geofence> geofences;
   final List<Station> stations;
+  final List<SafetyEvent> safetyEvents;
+  final List<DispatchMessage> messages;
 
   const SeedData({
     required this.vehicles,
@@ -24,6 +26,8 @@ class SeedData {
     required this.fuelEvents,
     required this.geofences,
     required this.stations,
+    this.safetyEvents = const [],
+    this.messages = const [],
   });
 }
 
@@ -298,6 +302,50 @@ SeedData buildSeed() {
     v.pos = t.posAt(t.progressPct);
   }
 
+  // Dispatch metadata: load references and customers per trip.
+  const tripMeta = <String, (String, String)>{
+    't1': ('LD-2418', 'Vertex Beverages'),
+    't2': ('LD-2431', 'Nordwind Electronics'),
+    't3': ('LD-2436', 'Aerolink Cargo'),
+    't4': ('LD-2402', 'Harbor Fresh Foods'),
+    't5': ('LD-2444', 'Greenfield Dairy'),
+    't6': ('LD-2447', 'Meridian Parcel'),
+    't8': ('LD-2450', 'PetroLube Industrial'),
+    't9': ('LD-2453', 'SweetCo Ingredients'),
+    't10': ('LD-2455', 'Aerolink Cargo'),
+    't13': ('LD-2459', 'Ironline Autoparts'),
+  };
+  for (final t in trips) {
+    final m = tripMeta[t.id];
+    if (m != null) {
+      t.loadId = m.$1;
+      t.customer = m.$2;
+    }
+  }
+
+  // Unassigned / ready loads waiting on the dispatch board (no driver yet).
+  final boardLoads = <Trip>[
+    mkTrip('b1', 'v7', '', 'Central Depot', 'Port Terminal', 'Construction equipment', 139, 0, 172,
+        [kDepot, const Offset(0.40, 0.60), const Offset(0.66, 0.62), kPort], st: TripStatus.planned, w: 22),
+    mkTrip('b2', 'v11', '', 'North Warehouse', 'East DC', 'Retail replenishment', 92, 0, 131,
+        [kNorthWh, const Offset(0.50, 0.28), kEastDc], st: TripStatus.planned, w: 9),
+    mkTrip('b3', 'v7', '', 'Airport Cargo', 'Central Depot', 'Returns consolidation', 76, 0, 114,
+        [kAirport, const Offset(0.18, 0.40), kDepot], st: TripStatus.planned, w: 4),
+  ];
+  const boardMeta = <String, (String, String)>{
+    'b1': ('LD-2462', 'Bastion Construction'),
+    'b2': ('LD-2463', 'Northline Retail'),
+    'b3': ('LD-2465', 'Aerolink Cargo'),
+  };
+  for (final t in boardLoads) {
+    final m = boardMeta[t.id];
+    if (m != null) {
+      t.loadId = m.$1;
+      t.customer = m.$2;
+    }
+  }
+  trips.addAll(boardLoads);
+
   // ── Maintenance ──────────────────────────────────────────────────────────
   MaintenanceItem mkM(
     String id,
@@ -311,25 +359,43 @@ SeedData buildSeed() {
     double cost,
     double dt, {
     DateTime? dd,
+    MaintenancePriority pri = MaintenancePriority.scheduled,
+    String? tec,
+    double lhe = 2,
+    double lha = 0,
+    bool apv = false,
   }) =>
       MaintenanceItem(
         id: id, vehicleId: vid, kind: k, status: st, title: title, part: part,
         dueInKm: dkm, confidencePct: cf, costEstUsd: cost, downtimeHours: dt, dueDate: dd,
+        priority: pri, tech: tec, laborHoursEst: lhe, laborHoursActual: lha, approved: apv,
       );
 
   final maintenance = <MaintenanceItem>[
-    mkM('m1', 'v3', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'DPF filter regeneration required', 'Aftertreatment DPF', 640, 92, 890, 6),
-    mkM('m2', 'v8', MaintenanceKind.preventive, MaintenanceStatus.scheduled, 'Axle-3 tire replacement (sensor fault)', 'Drive tires 11R22.5', 180, 97, 2400, 8, dd: now.add(const Duration(days: 2))),
-    mkM('m3', 'v1', MaintenanceKind.corrective, MaintenanceStatus.scheduled, 'Fuel tank leak repair — line seal', 'Fuel line seal kit', 0, 99, 620, 5, dd: now.add(const Duration(days: 1))),
-    mkM('m4', 'v12', MaintenanceKind.corrective, MaintenanceStatus.inProgress, 'Transmission rebuild', 'Eaton 13-speed', 0, 100, 5800, 42),
-    mkM('m5', 'v5', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Reefer compressor wear detected', 'ThermoKing compressor', 2300, 84, 1900, 10),
-    mkM('m6', 'v14', MaintenanceKind.preventive, MaintenanceStatus.scheduled, 'Battery bank replacement', 'AGM 4-bank', 400, 95, 780, 3, dd: now.add(const Duration(days: 4))),
-    mkM('m7', 'v9', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Brake pad wear — rear axle', 'Air disc pads', 1450, 88, 1100, 6),
-    mkM('m8', 'v7', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Coolant flush overdue', 'Cooling system', 200, 76, 340, 4),
-    mkM('m9', 'v2', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Scheduled oil service', 'Engine oil + filters', 0, 100, 480, 2),
-    mkM('m10', 'v4', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Reefer PM inspection', 'Reefer unit', 0, 100, 350, 3),
-    mkM('m11', 'v11', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Brake inspection', 'Hydraulic brakes', 0, 100, 260, 2),
-    mkM('m12', 'v6', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Wheel bearing noise pattern', 'Front bearings', 3100, 81, 920, 7),
+    mkM('m1', 'v3', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'DPF filter regeneration required', 'Aftertreatment DPF', 640, 92, 890, 6,
+        pri: MaintenancePriority.scheduled, tec: 'Luis Park', lhe: 3),
+    mkM('m2', 'v8', MaintenanceKind.preventive, MaintenanceStatus.scheduled, 'Axle-3 tire replacement (sensor fault)', 'Drive tires 11R22.5', 180, 97, 2400, 8,
+        dd: now.add(const Duration(days: 2)), pri: MaintenancePriority.nonScheduled, tec: 'Mara Voss', lhe: 5, apv: true),
+    mkM('m3', 'v1', MaintenanceKind.corrective, MaintenanceStatus.scheduled, 'Fuel tank leak repair — line seal', 'Fuel line seal kit', 0, 99, 620, 5,
+        dd: now.add(const Duration(days: 1)), pri: MaintenancePriority.emergency, tec: 'Dev Pratt', lhe: 4),
+    mkM('m4', 'v12', MaintenanceKind.corrective, MaintenanceStatus.inProgress, 'Transmission rebuild', 'Eaton 13-speed', 0, 100, 5800, 42,
+        pri: MaintenancePriority.emergency, tec: 'Ana Delgado', lhe: 38, lha: 26.5, apv: true),
+    mkM('m5', 'v5', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Reefer compressor wear detected', 'ThermoKing compressor', 2300, 84, 1900, 10,
+        pri: MaintenancePriority.scheduled, lhe: 6),
+    mkM('m6', 'v14', MaintenanceKind.preventive, MaintenanceStatus.scheduled, 'Battery bank replacement', 'AGM 4-bank', 400, 95, 780, 3,
+        dd: now.add(const Duration(days: 4)), pri: MaintenancePriority.scheduled, tec: 'Dev Pratt', lhe: 2),
+    mkM('m7', 'v9', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Brake pad wear — rear axle', 'Air disc pads', 1450, 88, 1100, 6,
+        pri: MaintenancePriority.scheduled, tec: 'Luis Park', lhe: 4),
+    mkM('m8', 'v7', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Coolant flush overdue', 'Cooling system', 200, 76, 340, 4,
+        pri: MaintenancePriority.scheduled, lhe: 2),
+    mkM('m9', 'v2', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Scheduled oil service', 'Engine oil + filters', 0, 100, 480, 2,
+        pri: MaintenancePriority.scheduled, tec: 'Mara Voss', lhe: 2, lha: 1.8, apv: true),
+    mkM('m10', 'v4', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Reefer PM inspection', 'Reefer unit', 0, 100, 350, 3,
+        pri: MaintenancePriority.scheduled, tec: 'Ana Delgado', lhe: 2, lha: 2.4, apv: true),
+    mkM('m11', 'v11', MaintenanceKind.preventive, MaintenanceStatus.completed, 'Brake inspection', 'Hydraulic brakes', 0, 100, 260, 2,
+        pri: MaintenancePriority.scheduled, tec: 'Dev Pratt', lhe: 1.5, lha: 1.5, apv: true),
+    mkM('m12', 'v6', MaintenanceKind.preventive, MaintenanceStatus.predicted, 'Wheel bearing noise pattern', 'Front bearings', 3100, 81, 920, 7,
+        pri: MaintenancePriority.nonScheduled, tec: 'Mara Voss', lhe: 5),
   ];
 
   // ── Fuel history (last 30 days, deterministic) ──────────────────────────
@@ -439,6 +505,77 @@ SeedData buildSeed() {
     }
   }
 
+  // ── Safety inbox (AI-detected events awaiting triage) ────────────────────
+  SafetyEvent mkS(
+    String id,
+    SafetyEventType ty,
+    String did,
+    String vid,
+    Duration ago,
+    String loc,
+    int sev,
+    String ctx,
+    int cf, {
+    bool clip = true,
+    SafetyEventStatus st = SafetyEventStatus.pending,
+  }) =>
+      SafetyEvent(
+        id: id, type: ty, driverId: did, vehicleId: vid,
+        timestamp: now.subtract(ago), location: loc, severity: sev,
+        aiContext: ctx, confidencePct: cf, hasClip: clip, status: st,
+      );
+
+  final safetyEvents = <SafetyEvent>[
+    mkS('se1', SafetyEventType.collision, 'd3', 'v12', const Duration(hours: 2), 'I-78 W mm 14',
+        3, 'Low-speed rear impact while queued at toll plaza. Lead vehicle braked unexpectedly.', 97),
+    mkS('se2', SafetyEventType.drowsiness, 'd6', 'v9', const Duration(hours: 4), 'Route 9 N, km 41',
+        3, 'Eye-closure pattern > 2.1 s across 3 scans during night segment.', 91),
+    mkS('se3', SafetyEventType.distraction, 'd5', 'v6', const Duration(hours: 6), 'Downtown Ave x 3rd',
+        2, 'Handheld phone use detected 48 s in urban zone, below 30 km/h.', 88),
+    mkS('se4', SafetyEventType.harshBraking, 'd0', 'v1', const Duration(hours: 8), 'I-95 S mm 22',
+        2, '0.41 g deceleration — lead vehicle cut-in during merge.', 82),
+    mkS('se5', SafetyEventType.speeding, 'd8', 'v5', const Duration(hours: 11), 'Highway 12, km 88',
+        2, '67 mph in 55 zone, sustained 4 min. Clear weather, light traffic.', 94),
+    mkS('se6', SafetyEventType.followingDistance, 'd2', 'v3', const Duration(hours: 13), 'I-80 E mm 6',
+        1, 'Following at 1.4 s headway for 90 s in heavy traffic.', 76),
+    mkS('se7', SafetyEventType.harshCornering, 'd9', 'v8', const Duration(hours: 20), 'Port Access Rd',
+        1, '0.29 g lateral at roundabout — tanker partially loaded.', 71),
+    mkS('se8', SafetyEventType.seatbelt, 'd7', 'v10', const Duration(hours: 26), 'Depot Exit B',
+        2, 'Seatbelt unfastened 200 m after depot gate, refastened 90 s later.', 98),
+    mkS('se9', SafetyEventType.harshBraking, 'd1', 'v2', const Duration(days: 2), 'I-95 N mm 41',
+        1, '0.33 g deceleration avoiding merging car. Reviewed — appropriate response.', 85,
+        st: SafetyEventStatus.recognized),
+    mkS('se10', SafetyEventType.speeding, 'd4', 'v4', const Duration(days: 2, hours: 5), 'Route 34, km 12',
+        1, 'False positive — construction zone limit changed mid-segment.', 43,
+        clip: false, st: SafetyEventStatus.dismissed),
+    mkS('se11', SafetyEventType.drowsiness, 'd2', 'v3', const Duration(days: 3), 'I-80 E mm 19',
+        2, 'Repeated lane drift corrected. Coaching session completed.', 89,
+        st: SafetyEventStatus.coached),
+    mkS('se12', SafetyEventType.harshBraking, 'd8', 'v5', const Duration(days: 4), 'North Warehouse dock',
+        1, 'Dock approach braking — normal for load weight.', 39,
+        clip: false, st: SafetyEventStatus.dismissed),
+  ];
+
+  // ── Dispatch ↔ driver messages ────────────────────────────────────────────
+  final messages = <DispatchMessage>[
+    DispatchMessage(
+      id: 'msg1', from: 'Ray Kowalski · Dispatch',
+      text: 'Derrick — customer added a second drop at East DC dock 4. Sequence updated in your route; confirm when acknowledged.',
+      time: now.subtract(const Duration(minutes: 18)), urgent: true),
+    DispatchMessage(
+      id: 'msg2', from: 'Dana Whitfield · Ops',
+      text: 'Fuel prices at Highway Plaza dropped 6 c/L today. Top up before the port leg if you can.',
+      time: now.subtract(const Duration(hours: 2))),
+    DispatchMessage(
+      id: 'msg3', from: 'Ray Kowalski · Dispatch',
+      text: 'Great run this week — on-time on all 5 legs. Kudos sent to your file.',
+      time: now.subtract(const Duration(hours: 26))),
+    DispatchMessage(
+      id: 'msg4', from: 'Priya Sharma · Safety',
+      text: 'Your defensive merge on I-95 was flagged as a positive event. Keep it up!',
+      time: now.subtract(const Duration(hours: 30))),
+  ];
+
   return SeedData(
     vehicles: vehicles,
     drivers: drivers,
@@ -448,5 +585,7 @@ SeedData buildSeed() {
     fuelEvents: fuelEvents,
     geofences: geofences,
     stations: stations,
+    safetyEvents: safetyEvents,
+    messages: messages,
   );
 }

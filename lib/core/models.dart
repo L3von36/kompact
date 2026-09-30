@@ -52,6 +52,27 @@ enum TripStatus { planned, enRoute, atRisk, delivered }
 
 enum EldStatus { connected, syncing, error }
 
+/// ELD duty-status clock states a driver cycles through on a shift.
+enum DutyStatus { offDuty, sleeperBerth, onDuty, driving }
+
+/// Work-order priority classes (Fleetio-style shop triage).
+enum MaintenancePriority { scheduled, nonScheduled, emergency }
+
+/// Safety-event detection types surfaced in the Safety Inbox.
+enum SafetyEventType {
+  collision,
+  drowsiness,
+  distraction,
+  harshBraking,
+  harshCornering,
+  speeding,
+  seatbelt,
+  followingDistance,
+}
+
+/// Triage state of a safety event in the review workflow.
+enum SafetyEventStatus { pending, coached, dismissed, recognized }
+
 /// ── Extensions ─────────────────────────────────────────────────────────────
 
 extension FleetRoleX on FleetRole {
@@ -114,6 +135,72 @@ extension FleetRoleX on FleetRole {
         FleetRole.safety => Icons.health_and_safety_rounded,
         FleetRole.finance => Icons.payments_rounded,
         FleetRole.executive => Icons.insights_rounded,
+      };
+}
+
+extension DutyStatusX on DutyStatus {
+  String get label => switch (this) {
+        DutyStatus.offDuty => 'Off Duty',
+        DutyStatus.sleeperBerth => 'Sleeper',
+        DutyStatus.onDuty => 'On Duty',
+        DutyStatus.driving => 'Driving',
+      };
+
+  IconData get icon => switch (this) {
+        DutyStatus.offDuty => Icons.power_settings_new_rounded,
+        DutyStatus.sleeperBerth => Icons.bedtime_rounded,
+        DutyStatus.onDuty => Icons.work_outline_rounded,
+        DutyStatus.driving => Icons.directions_car_rounded,
+      };
+}
+
+extension MaintenancePriorityX on MaintenancePriority {
+  String get label => switch (this) {
+        MaintenancePriority.scheduled => 'Scheduled',
+        MaintenancePriority.nonScheduled => 'Non-scheduled',
+        MaintenancePriority.emergency => 'Emergency',
+      };
+
+  String get short => switch (this) {
+        MaintenancePriority.scheduled => 'PM',
+        MaintenancePriority.nonScheduled => 'NS',
+        MaintenancePriority.emergency => 'EMG',
+      };
+}
+
+extension SafetyEventTypeX on SafetyEventType {
+  String get label => switch (this) {
+        SafetyEventType.collision => 'Collision',
+        SafetyEventType.drowsiness => 'Drowsiness',
+        SafetyEventType.distraction => 'Distraction',
+        SafetyEventType.harshBraking => 'Harsh braking',
+        SafetyEventType.harshCornering => 'Harsh cornering',
+        SafetyEventType.speeding => 'Speeding',
+        SafetyEventType.seatbelt => 'Seatbelt',
+        SafetyEventType.followingDistance => 'Following distance',
+      };
+
+  IconData get icon => switch (this) {
+        SafetyEventType.collision => Icons.car_crash_rounded,
+        SafetyEventType.drowsiness => Icons.remove_red_eye_outlined,
+        SafetyEventType.distraction => Icons.smartphone_rounded,
+        SafetyEventType.harshBraking => Icons.compress_rounded,
+        SafetyEventType.harshCornering => Icons.u_turn_left_rounded,
+        SafetyEventType.speeding => Icons.speed_rounded,
+        SafetyEventType.seatbelt => Icons.health_and_safety_outlined,
+        SafetyEventType.followingDistance => Icons.social_distance_rounded,
+      };
+
+  /// Sort rank used by the Safety Inbox — worst first.
+  int get triageRank => switch (this) {
+        SafetyEventType.collision => 0,
+        SafetyEventType.drowsiness => 1,
+        SafetyEventType.distraction => 2,
+        SafetyEventType.speeding => 3,
+        SafetyEventType.followingDistance => 4,
+        SafetyEventType.harshBraking => 5,
+        SafetyEventType.harshCornering => 6,
+        SafetyEventType.seatbelt => 7,
       };
 }
 
@@ -397,6 +484,11 @@ class DriverBehavior {
 
   Map<String, dynamic> toJson() =>
       {'hb': harshBraking30d, 'ha': harshAccel30d, 'sp': speeding30d, 'sb': seatbeltViolations30d};
+
+  /// Total harsh events across the ABC'S set (acceleration, braking,
+  /// cornering proxy, speeding) over the trailing 30 days.
+  int get behaviorTotal =>
+      harshBraking30d + harshAccel30d + speeding30d + seatbeltViolations30d;
 }
 
 /// A regulatory violation attached to a driver (guide p. 6: compliance).
@@ -441,6 +533,9 @@ class Driver {
   double onTimeRate;
   String? vehicleId;
   int yearsExperience;
+  DutyStatus dutyStatus; // live ELD clock state
+  int coachingCount30d; // assigned coaching sessions, last 30 days
+  int kudosCount30d; // recognition events from safety team
 
   Driver({
     required this.id,
@@ -460,6 +555,9 @@ class Driver {
     required this.onTimeRate,
     this.vehicleId,
     required this.yearsExperience,
+    this.dutyStatus = DutyStatus.driving,
+    this.coachingCount30d = 0,
+    this.kudosCount30d = 0,
   });
 
   double get hosRemaining => (hosCycleLimit - hosCycleUsed).clamp(0, hosCycleLimit);
@@ -487,6 +585,9 @@ class Driver {
         onTimeRate: (j['otr'] as num).toDouble(),
         vehicleId: j['vid'] as String?,
         yearsExperience: j['yx'] as int,
+        dutyStatus: DutyStatus.values.byName(j['duty'] as String? ?? 'driving'),
+        coachingCount30d: j['cch'] as int? ?? 0,
+        kudosCount30d: j['kud'] as int? ?? 0,
       );
 
   Map<String, dynamic> toJson() => {
@@ -507,6 +608,9 @@ class Driver {
         'otr': onTimeRate,
         'vid': vehicleId,
         'yx': yearsExperience,
+        'duty': dutyStatus.name,
+        'cch': coachingCount30d,
+        'kud': kudosCount30d,
       };
 }
 
@@ -514,10 +618,12 @@ class Driver {
 class Trip {
   final String id;
   final String vehicleId;
-  final String driverId;
+  String driverId;
   final String origin;
   final String destination;
   final String cargo;
+  String customer;
+  String loadId; // dispatch load reference, e.g. LD-2418
   final double weightT;
   final double distanceKm;
   double progressPct; // live
@@ -542,6 +648,8 @@ class Trip {
     required this.status,
     required this.waypoints,
     this.reeferSetpointC,
+    this.customer = 'Kompact Logistics',
+    this.loadId = 'LD-0000',
   });
 
   Offset posAt(double t) {
@@ -579,6 +687,8 @@ class Trip {
             })
             .toList(),
         reeferSetpointC: (j['sp'] as num?)?.toDouble(),
+        customer: j['cus'] as String? ?? 'Kompact Logistics',
+        loadId: j['lid'] as String? ?? 'LD-0000',
       );
 
   Map<String, dynamic> toJson() => {
@@ -596,6 +706,8 @@ class Trip {
         'st': status.name,
         'wp': waypoints.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
         'sp': reeferSetpointC,
+        'cus': customer,
+        'lid': loadId,
       };
 }
 
@@ -667,6 +779,11 @@ class MaintenanceItem {
   final int confidencePct; // AI prediction confidence
   final double costEstUsd;
   final double downtimeHours;
+  MaintenancePriority priority; // shop triage class
+  String? tech; // assigned technician
+  final double laborHoursEst;
+  double laborHoursActual; // live, logged while in progress
+  bool approved; // finance gate for repair orders over threshold
 
   MaintenanceItem({
     required this.id,
@@ -680,7 +797,18 @@ class MaintenanceItem {
     required this.confidencePct,
     required this.costEstUsd,
     required this.downtimeHours,
+    this.priority = MaintenancePriority.scheduled,
+    this.tech,
+    this.laborHoursEst = 2,
+    this.laborHoursActual = 0,
+    this.approved = false,
   });
+
+  /// Repair orders above this estimate need finance approval before work.
+  static const double approvalThresholdUsd = 500;
+
+  bool get needsApproval =>
+      status != MaintenanceStatus.completed && costEstUsd >= approvalThresholdUsd && !approved;
 
   factory MaintenanceItem.fromJson(Map<String, dynamic> j) => MaintenanceItem(
         id: j['id'] as String,
@@ -694,6 +822,11 @@ class MaintenanceItem {
         confidencePct: j['cf'] as int,
         costEstUsd: (j['c'] as num).toDouble(),
         downtimeHours: (j['dt'] as num).toDouble(),
+        priority: MaintenancePriority.values.byName(j['pri'] as String? ?? 'scheduled'),
+        tech: j['tec'] as String?,
+        laborHoursEst: (j['lhe'] as num?)?.toDouble() ?? 2,
+        laborHoursActual: (j['lha'] as num?)?.toDouble() ?? 0,
+        approved: j['apv'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -708,6 +841,11 @@ class MaintenanceItem {
         'cf': confidencePct,
         'c': costEstUsd,
         'dt': downtimeHours,
+        'pri': priority.name,
+        'tec': tech,
+        'lhe': laborHoursEst,
+        'lha': laborHoursActual,
+        'apv': approved,
       };
 }
 
@@ -799,7 +937,133 @@ class Station {
   const Station({required this.name, required this.brand, required this.center});
 }
 
-/// User preferences.
+/// A user account that can sign in to the FMS. Every role has at least one
+/// demo persona so the login screen can showcase the full RBAC matrix.
+class FleetUser {
+  final String id;
+  final String name;
+  final String email;
+  final FleetRole role;
+  final String title; // job title shown on the login card
+  final int hue; // avatar hue
+
+  const FleetUser({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.role,
+    required this.title,
+    required this.hue,
+  });
+
+  String get initials {
+    final parts = name.split(' ').where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+  }
+}
+
+/// Demo account directory — one persona per role (passwords are simulated).
+const kFleetUsers = <FleetUser>[
+  FleetUser(id: 'u-ops', name: 'Dana Whitfield', email: 'dana.whitfield@kompactfleet.io', role: FleetRole.ops, title: 'Director, Fleet Operations', hue: 214),
+  FleetUser(id: 'u-dis', name: 'Ray Kowalski', email: 'ray.kowalski@kompactfleet.io', role: FleetRole.dispatcher, title: 'Senior Dispatcher', hue: 194),
+  FleetUser(id: 'u-drv', name: 'Derrick Reyes', email: 'derrick.reyes@kompactfleet.io', role: FleetRole.driver, title: 'Line-haul Driver · Class A CDL', hue: 152),
+  FleetUser(id: 'u-mnt', name: 'Sam Okafor', email: 'sam.okafor@kompactfleet.io', role: FleetRole.maintenance, title: 'Shop Manager', hue: 36),
+  FleetUser(id: 'u-saf', name: 'Priya Sharma', email: 'priya.sharma@kompactfleet.io', role: FleetRole.safety, title: 'Safety & Compliance Lead', hue: 4),
+  FleetUser(id: 'u-fin', name: 'Elena Marsh', email: 'elena.marsh@kompactfleet.io', role: FleetRole.finance, title: 'Fleet Finance Controller', hue: 24),
+  FleetUser(id: 'u-exe', name: 'Jordan Abernathy', email: 'j.abernathy@kompactfleet.io', role: FleetRole.executive, title: 'Chief Operating Officer', hue: 262),
+];
+
+/// An AI-detected safety event awaiting review in the Safety Inbox
+/// (Samsara-style triage queue with context labels).
+class SafetyEvent {
+  final String id;
+  final SafetyEventType type;
+  final String driverId;
+  final String vehicleId;
+  final DateTime timestamp;
+  final String location;
+  final int severity; // 1..3 (3 = highest)
+  final String aiContext; // plain-language explanation
+  final int confidencePct; // detection confidence (EVE-style)
+  final bool hasClip; // dash-camera footage attached
+  SafetyEventStatus status;
+
+  SafetyEvent({
+    required this.id,
+    required this.type,
+    required this.driverId,
+    required this.vehicleId,
+    required this.timestamp,
+    required this.location,
+    required this.severity,
+    required this.aiContext,
+    required this.confidencePct,
+    this.hasClip = true,
+    this.status = SafetyEventStatus.pending,
+  });
+
+  factory SafetyEvent.fromJson(Map<String, dynamic> j) => SafetyEvent(
+        id: j['id'] as String,
+        type: SafetyEventType.values.byName(j['ty'] as String),
+        driverId: j['did'] as String,
+        vehicleId: j['vid'] as String,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(j['ts'] as int),
+        location: j['loc'] as String,
+        severity: j['sev'] as int,
+        aiContext: j['ctx'] as String,
+        confidencePct: j['cf'] as int,
+        hasClip: j['clip'] as bool? ?? true,
+        status: SafetyEventStatus.values.byName(j['st'] as String? ?? 'pending'),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'ty': type.name,
+        'did': driverId,
+        'vid': vehicleId,
+        'ts': timestamp.millisecondsSinceEpoch,
+        'loc': location,
+        'sev': severity,
+        'ctx': aiContext,
+        'cf': confidencePct,
+        'clip': hasClip,
+        'st': status.name,
+      };
+}
+
+/// A dispatch ↔ driver message shown in the driver cockpit inbox.
+class DispatchMessage {
+  final String id;
+  final String from;
+  final String text;
+  final DateTime time;
+  final bool urgent;
+  bool read;
+
+  DispatchMessage({
+    required this.id,
+    required this.from,
+    required this.text,
+    required this.time,
+    this.urgent = false,
+    this.read = false,
+  });
+
+  factory DispatchMessage.fromJson(Map<String, dynamic> j) => DispatchMessage(
+        id: j['id'] as String,
+        from: j['f'] as String,
+        text: j['tx'] as String,
+        time: DateTime.fromMillisecondsSinceEpoch(j['t'] as int),
+        urgent: j['u'] as bool? ?? false,
+        read: j['r'] as bool? ?? false,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'f': from, 'tx': text, 't': time.millisecondsSinceEpoch, 'u': urgent, 'r': read};
+}
+
 class AppSettings {
   int themeModeIndex; // 0 system, 1 light, 2 dark
   int accentIndex; // 0 blue, 1 indigo, 2 teal
@@ -809,6 +1073,7 @@ class AppSettings {
   bool alertsEnabled;
   bool simRunning;
   double simSpeed; // multiplier
+  String? signedInUserId; // active session (null → login screen)
 
   AppSettings({
     this.themeModeIndex = 0,
@@ -819,6 +1084,7 @@ class AppSettings {
     this.alertsEnabled = true,
     this.simRunning = true,
     this.simSpeed = 1.0,
+    this.signedInUserId,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) {
@@ -834,6 +1100,7 @@ class AppSettings {
       alertsEnabled: j['alerts'] as bool? ?? true,
       simRunning: j['sim'] as bool? ?? true,
       simSpeed: (j['simspd'] as num?)?.toDouble() ?? 1.0,
+      signedInUserId: j['user'] as String?,
     );
   }
 
@@ -846,5 +1113,6 @@ class AppSettings {
         'alerts': alertsEnabled,
         'sim': simRunning,
         'simspd': simSpeed,
+        'user': signedInUserId,
       };
 }

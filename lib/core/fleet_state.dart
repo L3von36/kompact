@@ -16,7 +16,7 @@ class AppState extends ChangeNotifier {
     _load();
   }
 
-  static const _storageKey = 'kompact_fms_v2';
+  static const _storageKey = 'kompact_fms_v3';
 
   /// Optional workspace deep link (`?role=driver`), consumed once at load.
   static FleetRole? startupRoleOverride;
@@ -30,6 +30,8 @@ class AppState extends ChangeNotifier {
   late List<FuelEvent> fuelEvents;
   List<Geofence> geofences = [];
   List<Station> stations = [];
+  List<SafetyEvent> safetyEvents = [];
+  List<DispatchMessage> messages = [];
   AppSettings settings = AppSettings();
 
   bool loaded = false;
@@ -68,10 +70,13 @@ class AppState extends ChangeNotifier {
       _installSeed();
     }
 
-    // Apply the ?role= deep link after settings have settled.
+    // Apply the ?role= deep link after settings have settled: auto sign in
+    // to that role's demo account (handy for bookmarks and screenshots).
     final override = startupRoleOverride;
     if (override != null) {
       settings.roleIndex = override.index;
+      final match = kFleetUsers.where((u) => u.role == override).firstOrNull;
+      if (match != null) settings.signedInUserId = match.id;
       startupRoleOverride = null;
     }
 
@@ -90,6 +95,8 @@ class AppState extends ChangeNotifier {
     fuelEvents = s.fuelEvents;
     geofences = s.geofences;
     stations = s.stations;
+    safetyEvents = s.safetyEvents;
+    messages = s.messages;
   }
 
   Future<void> _persist() async {
@@ -110,6 +117,8 @@ class AppState extends ChangeNotifier {
         'maintenance': maintenance.map((e) => e.toJson()).toList(),
         'fuel': fuelEvents.map((e) => e.toJson()).toList(),
         'geofences': geofences.map((e) => e.toJson()).toList(),
+        'safety': safetyEvents.map((e) => e.toJson()).toList(),
+        'messages': messages.map((e) => e.toJson()).toList(),
         'settings': settings.toJson(),
         'seq': {'trip': _tripSeq, 'alert': _alertSeq, 'tick': _tick},
         'today': {'l': litersConsumedToday, 'km': kmDrivenToday, 'co2': co2KgToday},
@@ -126,6 +135,8 @@ class AppState extends ChangeNotifier {
     fuelEvents = _list(j['fuel'], FuelEvent.fromJson) ?? fuelEvents;
     final gf = _list(j['geofences'], Geofence.fromJson);
     if (gf != null && gf.isNotEmpty) geofences = gf;
+    safetyEvents = _list(j['safety'], SafetyEvent.fromJson) ?? safetyEvents;
+    messages = _list(j['messages'], DispatchMessage.fromJson) ?? messages;
     settings = AppSettings.fromJson(Map<String, dynamic>.from(j['settings'] as Map));
     final seq = (j['seq'] as Map?)?.cast<String, dynamic>();
     _tripSeq = (seq?['trip'] as int?) ?? 100;
@@ -183,16 +194,47 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Role workspace ────────────────────────────────────────────────
+  // ── Session & role workspace ────────────────────────────────────────────
 
   /// Active operator persona. Every role sees a different dashboard and a
-  /// role-filtered navigation set over the same telematics pipeline.
+  /// role-filtered navigation set over the same telematics pipeline. The
+  /// workspace follows the signed-in account (login screen switches users).
   FleetRole get role =>
       FleetRole.values[settings.roleIndex.clamp(0, FleetRole.values.length - 1)];
 
+  /// Signed-in account, resolved from the persisted session (demo auth).
+  FleetUser? get currentUser {
+    final id = settings.signedInUserId;
+    if (id == null) return null;
+    return kFleetUsers.where((u) => u.id == id).firstOrNull;
+  }
+
+  bool get signedIn => currentUser != null;
+
+  /// Sign in as a demo account: lands in that role's workspace.
+  void signIn(FleetUser user) {
+    settings.signedInUserId = user.id;
+    settings.roleIndex = user.role.index;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Sign out and return to the login screen (session is cleared; fleet
+  /// data and preferences are kept).
+  void signOut() {
+    settings.signedInUserId = null;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Legacy switch kept for deep links (?role=driver) and quick switching
+  /// inside an active session.
   void setRole(FleetRole next) {
     if (next == role) return;
     settings.roleIndex = next.index;
+    // Keep the session aligned with the workspace when quick-switching.
+    final match = kFleetUsers.where((u) => u.role == next).firstOrNull;
+    if (match != null) settings.signedInUserId = match.id;
     _persist();
     notifyListeners();
   }
@@ -317,6 +359,57 @@ class AppState extends ChangeNotifier {
   /// Trips flagged at-risk of missing their delivery window.
   List<Trip> get atRiskTrips =>
       trips.where((t) => t.status == TripStatus.atRisk).toList();
+
+  /// Loads on the dispatch board that still need a driver.
+  List<Trip> get unassignedLoads =>
+      trips.where((t) => t.status == TripStatus.planned && t.driverId.isEmpty).toList();
+
+  /// Loads assigned but not yet rolling (driver confirmed, waiting pickup).
+  List<Trip> get assignedNotStarted => trips
+      .where((t) => t.status == TripStatus.planned && t.driverId.isNotEmpty)
+      .toList();
+
+  /// Loads currently en route.
+  List<Trip> get enRouteTrips =>
+      trips.where((t) => t.status == TripStatus.enRoute || t.status == TripStatus.atRisk).toList();
+
+  /// Loads delivered today (simulation history).
+  List<Trip> get deliveredTrips =>
+      trips.where((t) => t.status == TripStatus.delivered).toList();
+
+  /// Safety inbox: pending events, worst triage rank first.
+  List<SafetyEvent> get pendingSafetyEvents {
+    final list = safetyEvents.where((e) => e.status == SafetyEventStatus.pending).toList();
+    list.sort((a, b) {
+      final bySeverity = b.severity.compareTo(a.severity);
+      if (bySeverity != 0) return bySeverity;
+      return a.type.triageRank.compareTo(b.type.triageRank);
+    });
+    return list;
+  }
+
+  /// Coaching Priority (Samsara pattern): drivers ranked by risk — safety
+  /// score weighted with pending event count and harsh-event volume.
+  List<Driver> get coachingPriority {
+    final list = [...drivers];
+    list.sort((a, b) {
+      int risk(Driver d) {
+        final pending = safetyEvents
+            .where((e) => e.driverId == d.id && e.status == SafetyEventStatus.pending)
+            .length;
+        return (100 - d.safetyScore).round() + pending * 12 + d.behavior.behaviorTotal ~/ 2;
+      }
+      return risk(b).compareTo(risk(a));
+    });
+    return list;
+  }
+
+  /// Best candidate to take [load]: most HOS remaining among available
+  /// drivers, mirroring Geotab's ranked reassignment recommendations.
+  (Driver?, List<Driver>) assignmentCandidates(Trip load) {
+    final cands = availableDrivers.toList();
+    return (cands.isEmpty ? null : cands.first, cands);
+  }
 
   // ── Simulation tick ──────────────────────────────────────────────────────
 
@@ -775,6 +868,173 @@ class AppState extends ChangeNotifier {
       station: station?.name ?? 'Fleet Fuel Stop',
     ));
     v.fuelLevelPct = 100;
+    _persist();
+    notifyListeners();
+  }
+
+  // ── Dispatcher actions ───────────────────────────────────────────────────
+
+  /// Assign a board load to a driver: confirms the load, pairs the driver
+  /// with the planned vehicle and starts the leg (Samsara Dispatch flow).
+  void assignLoad(String tripId, String driverId) {
+    final t = trips.where((x) => x.id == tripId).firstOrNull;
+    final d = drivers.where((x) => x.id == driverId).firstOrNull;
+    if (t == null || d == null) return;
+    final v = vehicles.where((x) => x.id == t.vehicleId).firstOrNull;
+    if (v == null) return;
+
+    t.driverId = d.id;
+    t.status = TripStatus.enRoute;
+    t.etaMinutes = t.etaMinutes == 0 ? (t.distanceKm / 70 * 60).round() : t.etaMinutes;
+    t.progressPct = 0.02;
+
+    v.driverId = d.id;
+    d.vehicleId = v.id;
+    v.activeTripId = t.id;
+    v.status = VehicleStatus.onRoute;
+    v.speedKmh = 34;
+    v.pos = t.posAt(t.progressPct);
+    d.dutyStatus = DutyStatus.driving;
+
+    // Confirm to the driver's message inbox.
+    messages.insert(
+      0,
+      DispatchMessage(
+        id: 'msg${DateTime.now().millisecondsSinceEpoch}',
+        from: 'Ray Kowalski · Dispatch',
+        text: 'You are assigned load ${t.loadId} (${t.origin} → ${t.destination}) for ${t.customer}. Safe travels.',
+        time: DateTime.now(),
+        urgent: true,
+      ),
+    );
+    _persist();
+    notifyListeners();
+  }
+
+  // ── Driver cockpit actions ────────────────────────────────────────────────
+
+  /// ELD duty-status change from the driver cockpit.
+  void setDutyStatus(String driverId, DutyStatus next) {
+    final d = drivers.where((x) => x.id == driverId).firstOrNull;
+    if (d == null) return;
+    d.dutyStatus = next;
+    if (next == DutyStatus.offDuty || next == DutyStatus.sleeperBerth) {
+      final v = vehicles.where((x) => x.driverId == driverId).firstOrNull;
+      if (v != null && v.status == VehicleStatus.onRoute) {
+        v.speedKmh = 0;
+      }
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  void markMessageRead(String id) {
+    final m = messages.where((x) => x.id == id).firstOrNull;
+    if (m == null || m.read) return;
+    m.read = true;
+    _persist();
+    notifyListeners();
+  }
+
+  void markAllMessagesRead() {
+    var changed = false;
+    for (final m in messages) {
+      if (!m.read) {
+        m.read = true;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    _persist();
+    notifyListeners();
+  }
+
+  // ── Shop floor actions ────────────────────────────────────────────────────
+
+  /// Create a work order directly from an active DTC fault code — Fleetio's
+  /// signature DTC → WO automation.
+  void createWorkOrderFromDtc(String vehicleId, DtcCode code) {
+    final v = vehicles.where((x) => x.id == vehicleId).firstOrNull;
+    if (v == null) return;
+    final m = MaintenanceItem(
+      id: 'm${DateTime.now().millisecondsSinceEpoch}',
+      vehicleId: vehicleId,
+      kind: MaintenanceKind.corrective,
+      status: MaintenanceStatus.scheduled,
+      title: '${code.code} — ${code.description}',
+      part: 'Diagnostic + affected assembly',
+      dueInKm: 0,
+      dueDate: DateTime.now().add(const Duration(days: 1)),
+      confidencePct: 100,
+      costEstUsd: 480 + _rnd.nextDouble() * 900,
+      downtimeHours: 4 + _rnd.nextDouble() * 6,
+      priority: MaintenancePriority.nonScheduled,
+      laborHoursEst: 3,
+    );
+    maintenance.insert(0, m);
+    _persist();
+    notifyListeners();
+  }
+
+  /// Assign a technician to a work order.
+  void assignTech(String id, String tech) {
+    final m = maintenance.where((x) => x.id == id).firstOrNull;
+    if (m == null) return;
+    m.tech = tech;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Finance gate: approve a repair order above threshold.
+  void approveMaintenance(String id, {bool value = true}) {
+    final m = maintenance.where((x) => x.id == id).firstOrNull;
+    if (m == null) return;
+    m.approved = value;
+    _persist();
+    notifyListeners();
+  }
+
+  // ── Safety triage actions ─────────────────────────────────────────────────
+
+  /// Coach: assigns a coaching session for the event's driver.
+  void coachSafetyEvent(String eventId) {
+    final e = safetyEvents.where((x) => x.id == eventId).firstOrNull;
+    if (e == null) return;
+    e.status = SafetyEventStatus.coached;
+    final d = drivers.where((x) => x.id == e.driverId).firstOrNull;
+    if (d != null) d.coachingCount30d++;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Dismiss an event as a false positive (EVE-style validation).
+  void dismissSafetyEvent(String eventId) {
+    final e = safetyEvents.where((x) => x.id == eventId).firstOrNull;
+    if (e == null) return;
+    e.status = SafetyEventStatus.dismissed;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Recognize positive behavior (kudos).
+  void recognizeSafetyEvent(String eventId) {
+    final e = safetyEvents.where((x) => x.id == eventId).firstOrNull;
+    if (e == null) return;
+    e.status = SafetyEventStatus.recognized;
+    final d = drivers.where((x) => x.id == e.driverId).firstOrNull;
+    if (d != null) {
+      d.kudosCount30d++;
+      d.safetyScore = (d.safetyScore + 0.5).clamp(0, 100);
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  /// Send kudos straight from the leaderboard.
+  void sendKudos(String driverId) {
+    final d = drivers.where((x) => x.id == driverId).firstOrNull;
+    if (d == null) return;
+    d.kudosCount30d++;
     _persist();
     notifyListeners();
   }

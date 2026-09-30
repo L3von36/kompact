@@ -4,13 +4,13 @@ import 'package:provider/provider.dart';
 import '../../core/fleet_state.dart';
 import '../../core/models.dart';
 import '../../core/theme.dart';
-import '../../ui/charts.dart';
 import '../../ui/role_picker.dart';
 import '../../ui/widgets.dart';
 
-/// Maintenance workspace (guide p. 11 — predictive maintenance; p. 23 —
-/// corrective vs preventive). The shop board: AI-predicted work orders,
-/// the vehicle health triage list and active diagnostic trouble codes.
+/// Maintenance workspace — rebuilt as a shop-floor control room (Fleetio
+/// pattern): a dense work-order queue you can run the shop from, a PM-due
+/// list with interval progress, DTC fault codes that convert to work orders
+/// in one tap, and labor tracking. Maximum density — the queue IS the tool.
 class MaintenanceDashboard extends StatelessWidget {
   const MaintenanceDashboard({super.key});
 
@@ -21,22 +21,26 @@ class MaintenanceDashboard extends StatelessWidget {
       return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
 
-    final wide = MediaQuery.sizeOf(context).width >= 1000;
+    final wide = MediaQuery.sizeOf(context).width >= 1080;
     final open = state.openMaintenance;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: K.xxl),
       children: [
         PageHeader(
-          title: 'Shop overview',
+          title: 'Shop control',
           subtitle:
-              '${open.length} open work orders · ${state.inShopCount} vehicles in shop · ${state.predictedMaintenanceCount} AI predictions pending',
-          actions: [const RoleSwitchChip()],
+              '${open.length} open work orders · ${state.inShopCount} vehicles in shop · ${state.vehicles.where((v) => v.hasActiveDtc).length} assets with active DTCs',
+          actions: [
+            _newWoButton(context, state),
+            const RoleSwitchChip(),
+          ],
         ),
 
+        // Pipeline summary chips: the shop funnel at a glance.
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: K.lg),
-          child: _kpiGrid(context, state, wide),
+          child: _pipeline(context, state),
         ),
         const SizedBox(height: K.md),
 
@@ -46,16 +50,31 @@ class MaintenanceDashboard extends StatelessWidget {
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(flex: 3, child: _leftColumn(context, state, open)),
+                    Expanded(flex: 7, child: _woQueue(context, state, open)),
                     const SizedBox(width: K.md),
-                    Expanded(flex: 2, child: _rightColumn(context, state)),
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        children: [
+                          _dtcFeed(context, state),
+                          const SizedBox(height: K.md),
+                          _pmDue(context, state),
+                          const SizedBox(height: K.md),
+                          _partsPanel(context),
+                        ],
+                      ),
+                    ),
                   ],
                 )
               : Column(
                   children: [
-                    _leftColumn(context, state, open),
+                    _woQueue(context, state, open),
                     const SizedBox(height: K.md),
-                    _rightColumn(context, state),
+                    _dtcFeed(context, state),
+                    const SizedBox(height: K.md),
+                    _pmDue(context, state),
+                    const SizedBox(height: K.md),
+                    _partsPanel(context),
                   ],
                 ),
         ),
@@ -63,236 +82,542 @@ class MaintenanceDashboard extends StatelessWidget {
     );
   }
 
-  Widget _kpiGrid(BuildContext context, AppState state, bool wide) {
+  Widget _newWoButton(BuildContext context, AppState state) {
     final p = context.pal;
-    final open = state.openMaintenance;
-    final downtime = open.fold<double>(0, (s, m) => s + m.downtimeHours);
-    return GridView.count(
-      crossAxisCount: wide ? 5 : 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: K.xs,
-      crossAxisSpacing: K.xs,
-      childAspectRatio: wide ? 1.85 : 1.65,
+    return InkWell(
+      onTap: () {
+        // Create a blank inspection WO on the first vehicle with a DTC,
+        // or a general service order — instant queue feedback.
+        final withDtc = state.vehicles.where((v) => v.hasActiveDtc).firstOrNull;
+        if (withDtc != null) {
+          final code = withDtc.dtcCodes.where((c) => c.active).first;
+          state.createWorkOrderFromDtc(withDtc.id, code);
+          _toast(context, 'Work order created from ${code.code} on ${withDtc.plate}');
+        } else {
+          _toast(context, 'No open fault codes — nothing to convert right now.');
+        }
+      },
+      borderRadius: BorderRadius.circular(K.rSm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: K.sm + 2, vertical: K.xs + 2),
+        decoration: BoxDecoration(
+          color: p.urgent,
+          borderRadius: BorderRadius.circular(K.rSm),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.add_rounded, size: 13, color: Colors.white),
+            const SizedBox(width: K.xs + 1),
+            Text(
+              'NEW WORK ORDER',
+              style: TextStyle(
+                fontSize: K.micro,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+                color: Colors.white,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toast(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 3), content: Text(message)),
+    );
+  }
+
+  // ── Pipeline funnel ──────────────────────────────────────────────────────
+
+  Widget _pipeline(BuildContext context, AppState state) {
+    final p = context.pal;
+    final stages = <(MaintenanceStatus, String, Color)>[
+      (MaintenanceStatus.predicted, 'Predicted', p.info),
+      (MaintenanceStatus.scheduled, 'Scheduled', p.primary),
+      (MaintenanceStatus.inProgress, 'In progress', p.urgent),
+      (MaintenanceStatus.completed, 'Completed', p.good),
+    ];
+    return Row(
       children: [
-        KpiTile(
-          label: 'Open work orders',
-          value: '${open.length}',
-          icon: Icons.build_circle_outlined,
-        ),
-        KpiTile(
-          label: 'In shop now',
-          value: '${state.inShopCount}',
-          icon: Icons.garage_rounded,
-          accent: p.urgent,
-        ),
-        KpiTile(
-          label: 'AI predictions',
-          value: '${state.predictedMaintenanceCount}',
-          icon: Icons.psychology_alt_rounded,
-          accent: p.primary,
-        ),
-        KpiTile(
-          label: 'Downtime planned',
-          value: downtime.toStringAsFixed(0),
-          unit: 'h',
-          icon: Icons.timer_off_outlined,
-        ),
-        KpiTile(
-          label: 'Open cost est.',
-          value: usd(state.openMaintenanceCost),
-          icon: Icons.payments_outlined,
-          accent: p.accent,
-        ),
+        for (var i = 0; i < stages.length; i++) ...[
+          if (i > 0) ...[
+            const Icon(Icons.chevron_right_rounded, size: 13, color: null),
+            const SizedBox(width: K.xxs),
+          ],
+          Expanded(
+            child: _pipelineChip(
+              context,
+              stages[i].$2.toUpperCase(),
+              '${state.maintenance.where((m) => m.status == stages[i].$1).length}',
+              stages[i].$3,
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _leftColumn(BuildContext context, AppState state, List<MaintenanceItem> open) {
+  Widget _pipelineChip(BuildContext context, String label, String count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: K.md, vertical: K.sm + 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(K.rSm),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            count,
+            style: TextStyle(
+              fontSize: K.title,
+              fontWeight: FontWeight.w800,
+              color: color,
+              fontFamily: 'Inter',
+            ),
+          ),
+          const SizedBox(width: K.sm),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: K.micro,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+                color: color,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Work-order queue (the hero table) ────────────────────────────────────
+
+  Widget _woQueue(BuildContext context, AppState state, List<MaintenanceItem> open) {
+    final p = context.pal;
     return KCard(
       padding: const EdgeInsets.all(K.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionHeader(
-            title: 'Work order pipeline',
-            eyebrow: 'Predicted → scheduled → in progress',
+            title: 'Work order queue',
+            eyebrow: 'Live shop floor · priority triage',
             live: true,
+            action: Text(
+              'ROs > \$${MaintenanceItem.approvalThresholdUsd.round()} need finance approval',
+              style: TextStyle(
+                fontSize: K.caption,
+                color: p.textTertiary,
+                fontFamily: 'Inter',
+              ),
+            ),
           ),
+
+          // Table header.
+          _tableHead(context),
           if (open.isEmpty)
-            const EmptyState(
-              icon: Icons.verified_rounded,
-              title: 'Queue is clear',
-              subtitle: 'No open work orders — the fleet is healthy.',
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: K.xxl),
+              child: EmptyState(
+                icon: Icons.verified_rounded,
+                title: 'Queue is clear',
+                subtitle: 'No open work orders — the fleet is healthy.',
+              ),
             )
           else
-            for (final m in open.take(10)) _workOrderRow(context, state, m),
+            for (final m in open.take(10)) _woRow(context, state, m),
         ],
       ),
     );
   }
 
-  Widget _workOrderRow(BuildContext context, AppState state, MaintenanceItem m) {
+  Widget _tableHead(BuildContext context) {
     final p = context.pal;
-    final v = state.vehicleById(m.vehicleId);
-
-    (Color, Color, String, IconData) statusVisual() => switch (m.status) {
-          MaintenanceStatus.predicted => (p.primary, p.primarySoft, 'PREDICTED', Icons.psychology_alt_rounded),
-          MaintenanceStatus.scheduled => (p.satisfactory, p.satisfactorySoft, 'SCHEDULED', Icons.event_available_rounded),
-          MaintenanceStatus.inProgress => (p.urgent, p.urgentSoft, 'IN SHOP', Icons.construction_rounded),
-          MaintenanceStatus.completed => (p.good, p.goodSoft, 'DONE', Icons.check_circle_rounded),
-        };
-    final (color, soft, label, icon) = statusVisual();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: K.xs + 1),
+    final style = TextStyle(
+      fontSize: 9,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.6,
+      color: p.textTertiary,
+      fontFamily: 'Inter',
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: K.sm, vertical: K.xs),
+      decoration: BoxDecoration(
+        color: p.surfaceAlt,
+        borderRadius: BorderRadius.circular(K.rSm),
+      ),
       child: Row(
         children: [
-          // Status icon block.
-          Container(
-            width: 26,
-            height: 26,
-            decoration: BoxDecoration(color: soft, borderRadius: BorderRadius.circular(K.rSm)),
-            child: Icon(icon, size: 14, color: color),
+          const SizedBox(width: 40, child: Text('PRI', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 0.5, fontFamily: 'Inter'))),
+          SizedBox(width: 62, child: Text('VEHICLE', style: style)),
+          Expanded(flex: 4, child: Text('JOB', style: style)),
+          SizedBox(width: 78, child: Text('TECH', style: style)),
+          SizedBox(width: 56, child: Text('LABOR', style: style)),
+          SizedBox(width: 64, child: Text('COST', style: style)),
+          SizedBox(width: 90, child: Text('STATUS', style: style)),
+          SizedBox(width: 70, child: Text('ACTION', style: style)),
+        ],
+      ),
+    );
+  }
+
+  Widget _woRow(BuildContext context, AppState state, MaintenanceItem m) {
+    final p = context.pal;
+    final v = state.vehicleById(m.vehicleId);
+    final priColor = switch (m.priority) {
+      MaintenancePriority.emergency => p.critical,
+      MaintenancePriority.nonScheduled => p.urgent,
+      MaintenancePriority.scheduled => p.primary,
+    };
+    final statusColor = switch (m.status) {
+      MaintenanceStatus.predicted => p.info,
+      MaintenanceStatus.scheduled => p.primary,
+      MaintenanceStatus.inProgress => p.urgent,
+      MaintenanceStatus.completed => p.good,
+    };
+    final laborText = m.status == MaintenanceStatus.inProgress
+        ? '${m.laborHoursActual.toStringAsFixed(1)}/${m.laborHoursEst.toStringAsFixed(0)}h'
+        : '${m.laborHoursEst.toStringAsFixed(0)}h';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: K.sm, vertical: K.xs + 2),
+      margin: const EdgeInsets.only(bottom: K.xxs + 1),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(K.rSm),
+        border: Border.all(color: p.border),
+        color: m.priority == MaintenancePriority.emergency ? p.criticalSoft.withValues(alpha: 0.4) : null,
+      ),
+      child: Row(
+        children: [
+          // Priority tag.
+          SizedBox(
+            width: 40,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: K.xs + 1, vertical: 1),
+              decoration: BoxDecoration(
+                color: priColor.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(K.rSm),
+                border: Border.all(color: priColor.withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                m.priority.short,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: K.micro,
+                  fontWeight: FontWeight.w800,
+                  color: priColor,
+                  fontFamily: 'Inter',
+                ),
+              ),
+            ),
           ),
-          const SizedBox(width: K.sm),
-          // Vehicle + job.
+          const SizedBox(width: K.xs + 1),
+          SizedBox(
+            width: 62,
+            child: Text(
+              v?.plate ?? '—',
+              style: TextStyle(
+                fontSize: K.label,
+                fontWeight: FontWeight.w700,
+                color: p.text,
+                fontFamily: 'Inter',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            flex: 4,
+            child: Text(
+              m.title,
+              style: TextStyle(
+                fontSize: K.label,
+                color: p.textSecondary,
+                fontFamily: 'Inter',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          SizedBox(
+            width: 78,
+            child: Text(
+              m.tech ?? 'unassigned',
+              style: TextStyle(
+                fontSize: K.label,
+                color: m.tech == null ? p.textTertiary : p.textSecondary,
+                fontStyle: m.tech == null ? FontStyle.italic : FontStyle.normal,
+                fontFamily: 'Inter',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          SizedBox(
+            width: 56,
+            child: Text(
+              laborText,
+              style: TextStyle(
+                fontSize: K.label,
+                color: m.status == MaintenanceStatus.inProgress &&
+                        m.laborHoursActual > m.laborHoursEst
+                    ? p.critical
+                    : p.textSecondary,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 64,
+            child: Text(
+              usd(m.costEstUsd),
+              style: TextStyle(
+                fontSize: K.label,
+                fontWeight: FontWeight.w700,
+                color: m.needsApproval ? p.accent : p.text,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 90,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Text(
-                      v?.plate ?? '—',
-                      style: TextStyle(
-                        fontSize: K.label,
-                        fontWeight: FontWeight.w700,
-                        color: p.text,
-                        fontFamily: 'Inter',
-                      ),
-                    ),
-                    const SizedBox(width: K.sm),
-                    StatusChip(label: label, color: color, soft: soft, dot: false),
-                    const Spacer(),
-                    Text(
-                      m.kind == MaintenanceKind.preventive ? 'Preventive' : 'Corrective',
-                      style: TextStyle(
-                        fontSize: K.caption,
-                        fontWeight: FontWeight.w600,
-                        color: m.kind == MaintenanceKind.preventive ? p.good : p.accent,
-                        fontFamily: 'Inter',
-                      ),
-                    ),
-                  ],
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: statusColor),
                 ),
-                const SizedBox(height: 1),
-                Text(
-                  '${m.title} · ${m.part}',
-                  style: TextStyle(
-                    fontSize: K.caption,
-                    color: p.textSecondary,
-                    fontFamily: 'Inter',
+                const SizedBox(width: K.xs + 1),
+                Expanded(
+                  child: Text(
+                    switch (m.status) {
+                      MaintenanceStatus.predicted => 'Predicted',
+                      MaintenanceStatus.scheduled => 'Scheduled',
+                      MaintenanceStatus.inProgress => 'In shop',
+                      MaintenanceStatus.completed => 'Done',
+                    },
+                    style: TextStyle(
+                      fontSize: K.caption,
+                      fontWeight: FontWeight.w700,
+                      color: statusColor,
+                      fontFamily: 'Inter',
+                    ),
+                    maxLines: 1,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: K.sm),
-          // Due + confidence + cost.
           SizedBox(
-            width: 92,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  'due in ${m.dueInKm} km',
-                  style: TextStyle(
-                    fontSize: K.caption,
-                    fontWeight: FontWeight.w700,
-                    color: m.dueInKm < 800 ? p.critical : p.textSecondary,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-                Text(
-                  '${m.confidencePct}% conf · ${usd(m.costEstUsd)}',
-                  style: TextStyle(
-                    fontSize: K.caption,
-                    color: p.textTertiary,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: K.sm),
-          // Action.
-          SizedBox(
-            width: 74,
-            height: 24,
-            child: switch (m.status) {
-              MaintenanceStatus.predicted => FilledButton(
-                  onPressed: () => state.scheduleMaintenance(m.id),
-                  style: FilledButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    textStyle: const TextStyle(fontSize: K.caption, fontWeight: FontWeight.w700, fontFamily: 'Inter'),
-                  ),
-                  child: const Text('SCHEDULE'),
-                ),
-              MaintenanceStatus.scheduled => FilledButton(
-                  onPressed: () => state.startMaintenance(m.id),
-                  style: FilledButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    textStyle: const TextStyle(fontSize: K.caption, fontWeight: FontWeight.w700, fontFamily: 'Inter'),
-                  ),
-                  child: const Text('START'),
-                ),
-              MaintenanceStatus.inProgress => FilledButton(
-                  onPressed: () => state.completeMaintenance(m.id),
-                  style: FilledButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    backgroundColor: p.good,
-                    textStyle: const TextStyle(fontSize: K.caption, fontWeight: FontWeight.w700, fontFamily: 'Inter'),
-                  ),
-                  child: const Text('CLOSE'),
-                ),
-              MaintenanceStatus.completed => const SizedBox.shrink(),
-            },
+            width: 70,
+            child: _rowAction(context, state, m),
           ),
         ],
       ),
     );
   }
 
-  Widget _rightColumn(BuildContext context, AppState state) {
+  /// Next-best action per WO state: schedule → assign tech → start → close.
+  Widget _rowAction(BuildContext context, AppState state, MaintenanceItem m) {
     final p = context.pal;
-    final worst = state.healthRanking.take(6).toList();
-    final open = state.openMaintenance;
-    final preventive = open.where((m) => m.kind == MaintenanceKind.preventive).length;
-    final corrective = open.length - preventive;
+    late final String label;
+    late final VoidCallback onTap;
+    late final Color color;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Vehicle health triage.
-        KCard(
-          padding: const EdgeInsets.all(K.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SectionHeader(title: 'Health triage', eyebrow: 'Worst vehicles first'),
-              for (final v in worst)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: K.xs + 1),
-                  child: Row(
+    switch (m.status) {
+      case MaintenanceStatus.predicted:
+        label = 'SCHEDULE';
+        onTap = () => state.scheduleMaintenance(m.id);
+        color = p.info;
+      case MaintenanceStatus.scheduled:
+        if (m.needsApproval) {
+          label = 'APPROVE';
+          onTap = () => state.approveMaintenance(m.id);
+          color = p.accent;
+        } else if (m.tech == null) {
+          label = 'ASSIGN';
+          onTap = () => state.assignTech(m.id, 'Luis Park');
+          color = p.primary;
+        } else {
+          label = 'START';
+          onTap = () => state.startMaintenance(m.id);
+          color = p.urgent;
+        }
+      case MaintenanceStatus.inProgress:
+        label = 'CLOSE';
+        onTap = () => state.completeMaintenance(m.id);
+        color = p.good;
+      case MaintenanceStatus.completed:
+        label = 'DONE';
+        onTap = () {};
+        color = p.good;
+    }
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(K.rSm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: K.sm, vertical: K.xs + 1),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(K.rSm),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: K.micro,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
+            color: color,
+            fontFamily: 'Inter',
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── DTC feed with one-tap WO conversion ──────────────────────────────────
+
+  Widget _dtcFeed(BuildContext context, AppState state) {
+    final p = context.pal;
+    final items = <(Vehicle, DtcCode)>[
+      for (final v in state.vehicles)
+        for (final c in v.dtcCodes.where((c) => c.active)) (v, c),
+    ];
+
+    return KCard(
+      padding: const EdgeInsets.all(K.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeader(
+            title: 'Fault codes',
+            eyebrow: 'DTC → work order in one tap',
+            action: Text(
+              '${items.length} ACTIVE',
+              style: TextStyle(
+                fontSize: K.caption,
+                fontWeight: FontWeight.w800,
+                color: items.isEmpty ? p.good : p.urgent,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+          if (items.isEmpty)
+            const EmptyState(icon: Icons.memory_rounded, title: 'No active fault codes')
+          else
+            for (final (v, c) in items.take(5))
+              Padding(
+                padding: const EdgeInsets.only(bottom: K.xs + 1),
+                child: InkWell(
+                  onTap: () {
+                    state.createWorkOrderFromDtc(v.id, c);
+                    _toast(context, '${c.code} converted to a work order for ${v.plate}');
+                  },
+                  borderRadius: BorderRadius.circular(K.rSm),
+                  child: Container(
+                    padding: const EdgeInsets.all(K.sm + 1),
+                    decoration: BoxDecoration(
+                      color: p.urgentSoft.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(K.rSm),
+                      border: Border.all(color: p.urgent.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          c.code,
+                          style: TextStyle(
+                            fontSize: K.label,
+                            fontWeight: FontWeight.w800,
+                            color: p.urgent,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                        const SizedBox(width: K.sm),
+                        Expanded(
+                          child: Text(
+                            c.description,
+                            style: TextStyle(
+                              fontSize: K.caption,
+                              color: p.textSecondary,
+                              fontFamily: 'Inter',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: K.xs),
+                        Text(
+                          v.plate,
+                          style: TextStyle(
+                            fontSize: K.caption,
+                            fontWeight: FontWeight.w700,
+                            color: p.textTertiary,
+                            fontFamily: 'Inter',
+                          ),
+                        ),
+                        const SizedBox(width: K.sm),
+                        Icon(Icons.add_circle_outline_rounded, size: 13, color: p.urgent),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  // ── PM due list with interval progress ───────────────────────────────────
+
+  Widget _pmDue(BuildContext context, AppState state) {
+    final p = context.pal;
+    final pm = state.maintenance
+        .where((m) => m.kind == MaintenanceKind.preventive && m.status != MaintenanceStatus.completed)
+        .toList()
+      ..sort((a, b) => a.dueInKm.compareTo(b.dueInKm));
+
+    return KCard(
+      padding: const EdgeInsets.all(K.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeader(
+            title: 'PM due',
+            eyebrow: 'By odometer · confidence-weighted',
+            action: Text(
+              '${state.predictedMaintenanceCount} DUE',
+              style: TextStyle(
+                fontSize: K.caption,
+                fontWeight: FontWeight.w800,
+                color: p.urgent,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
+          for (final m in pm.take(6))
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: K.xxs + 1),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
                       SizedBox(
-                        width: 64,
+                        width: 58,
                         child: Text(
-                          v.plate,
+                          state.vehicleById(m.vehicleId)?.plate ?? '—',
                           style: TextStyle(
                             fontSize: K.label,
                             fontWeight: FontWeight.w700,
@@ -302,175 +627,117 @@ class MaintenanceDashboard extends StatelessWidget {
                         ),
                       ),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${v.type.short} · ${kmFmt(v.odometerKm)}',
-                              style: TextStyle(
-                                fontSize: K.caption,
-                                color: p.textTertiary,
-                                fontFamily: 'Inter',
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            KProgress(
-                              value: 1 - v.condition.rank / 3,
-                              color: conditionColor(context, v.condition),
-                              height: 2,
-                            ),
-                          ],
+                        child: Text(
+                          m.part,
+                          style: TextStyle(
+                            fontSize: K.label,
+                            color: p.textSecondary,
+                            fontFamily: 'Inter',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        '${m.dueInKm} km',
+                        style: TextStyle(
+                          fontSize: K.caption,
+                          fontWeight: FontWeight.w800,
+                          color: m.dueInKm < 300 ? p.critical : m.dueInKm < 1000 ? p.urgent : p.textTertiary,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: K.xxs + 1),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: KProgress(
+                          value: (1 - (m.dueInKm / 3500)).clamp(0.0, 1.0),
+                          color: m.dueInKm < 300 ? p.critical : m.dueInKm < 1000 ? p.urgent : p.primary,
+                          height: 3,
                         ),
                       ),
                       const SizedBox(width: K.sm),
-                      StatusChip.condition(context, v.condition),
+                      Text(
+                        '${m.confidencePct}% conf.',
+                        style: TextStyle(
+                          fontSize: K.caption,
+                          color: p.textTertiary,
+                          fontFamily: 'Inter',
+                        ),
+                      ),
                     ],
                   ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: K.md),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
-        // Predictive mix.
-        KCard(
-          padding: const EdgeInsets.all(K.md),
-          child: Column(
-            children: [
-              const SectionHeader(title: 'Work mix', eyebrow: 'Preventive vs corrective'),
-              Row(
+  // ── Parts inventory alerts ───────────────────────────────────────────────
+
+  Widget _partsPanel(BuildContext context) {
+    final p = context.pal;
+    const parts = <(String, int, int)>[
+      ('Drive tires 11R22.5', 2, 6),
+      ('Air disc pads', 4, 8),
+      ('Fuel line seal kit', 1, 4),
+      ('AGM batteries', 3, 6),
+      ('Eaton clutch kit', 0, 2),
+    ];
+
+    return KCard(
+      padding: const EdgeInsets.all(K.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeader(title: 'Parts stock', eyebrow: 'Auto-deducts on WO close'),
+          for (final (name, onHand, min) in parts)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: K.xxs + 1),
+              child: Row(
                 children: [
-                  Donut(
-                    size: 88,
-                    slices: [
-                      (preventive.toDouble(), p.good),
-                      (corrective.toDouble(), p.accent),
-                    ],
-                    centerTop: '${open.length}',
-                    centerBottom: 'OPEN',
-                  ),
-                  const SizedBox(width: K.md),
                   Expanded(
-                    child: Column(
-                      children: [
-                        LabelBar(
-                          label: 'Preventive',
-                          value: open.isEmpty ? 0 : preventive / open.length,
-                          valueText: '$preventive',
-                          color: p.good,
-                        ),
-                        LabelBar(
-                          label: 'Corrective',
-                          value: open.isEmpty ? 0 : corrective / open.length,
-                          valueText: '$corrective',
-                          color: p.accent,
-                        ),
-                        const SizedBox(height: K.xs),
-                        Text(
-                          'Preventive work avoids the downtime and brand damage of roadside failures.',
-                          style: TextStyle(
-                            fontSize: K.caption,
-                            height: 1.3,
-                            color: p.textTertiary,
-                            fontFamily: 'Inter',
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: K.label,
+                        color: p.textSecondary,
+                        fontFamily: 'Inter',
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 52,
+                    child: KProgress(
+                      value: (onHand / min).clamp(0.0, 1.0),
+                      color: onHand == 0 ? p.critical : onHand * 2 <= min ? p.urgent : p.good,
+                      height: 3,
+                    ),
+                  ),
+                  const SizedBox(width: K.sm),
+                  SizedBox(
+                    width: 28,
+                    child: Text(
+                      '$onHand',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: K.label,
+                        fontWeight: FontWeight.w800,
+                        color: onHand == 0 ? p.critical : onHand * 2 <= min ? p.urgent : p.text,
+                        fontFamily: 'Inter',
+                      ),
                     ),
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: K.md),
-
-        // Active DTC codes.
-        KCard(
-          padding: const EdgeInsets.all(K.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SectionHeader(
-                title: 'Active fault codes',
-                eyebrow: 'OBD-II diagnostics',
-                live: true,
-                action: Text(
-                  '${state.vehicles.where((v) => v.hasActiveDtc).length} vehicles',
-                  style: TextStyle(
-                    fontSize: K.caption,
-                    fontWeight: FontWeight.w700,
-                    color: p.textTertiary,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-              ),
-              ..._dtcRows(context, state),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<Widget> _dtcRows(BuildContext context, AppState state) {
-    final p = context.pal;
-    final rows = <Widget>[];
-    for (final v in state.vehicles) {
-      for (final dtc in v.dtcCodes.where((c) => c.active)) {
-        rows.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: K.xxs + 1),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: K.xs + 1, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: p.criticalSoft,
-                    borderRadius: BorderRadius.circular(K.rSm),
-                  ),
-                  child: Text(
-                    dtc.code,
-                    style: TextStyle(
-                      fontSize: K.caption,
-                      fontWeight: FontWeight.w800,
-                      color: p.critical,
-                      fontFamily: 'Inter',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: K.sm),
-                Text(
-                  v.plate,
-                  style: TextStyle(
-                    fontSize: K.label,
-                    fontWeight: FontWeight.w700,
-                    color: p.text,
-                    fontFamily: 'Inter',
-                  ),
-                ),
-                const SizedBox(width: K.sm),
-                Expanded(
-                  child: Text(
-                    dtc.description,
-                    style: TextStyle(
-                      fontSize: K.caption,
-                      color: p.textSecondary,
-                      fontFamily: 'Inter',
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
             ),
-          ),
-        );
-      }
-    }
-    if (rows.isEmpty) {
-      rows.add(const EmptyState(icon: Icons.verified_outlined, title: 'No active fault codes'));
-    }
-    return rows;
+        ],
+      ),
+    );
   }
 }

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A compact-design fleet management system.</strong><br>
-  7 role-based dashboards · live tracking · drivers · fuel · predictive maintenance · safety & compliance — built with Flutter for 6 targets from one codebase.
+  Login screen with 7 user accounts · 7 structurally-distinct role dashboards · live tracking · drivers · fuel · predictive maintenance · safety & compliance — built with Flutter for 6 targets from one codebase.
 </p>
 
 <p align="center">
@@ -24,21 +24,33 @@ fleet safety & compliance* — on a live-simulated telematics pipeline with an
 emphasis on emerging tech (IoT sensors, AI predictions, geofencing/spatial ops,
 remote dashboards).
 
-## Role-based workspaces
+## Sign in as anyone
 
-The same live telematics pipeline, framed for the decisions each role actually
-makes. Switch workspace from the sidebar identity card (or `?role=driver` in
-the web URL) — the dashboard, modules and navigation all follow the persona.
+Every role has a demo account on the login screen — pick a persona, sign in,
+and land in a workspace built for that job. Sessions persist on-device; the
+sidebar account card signs you out (or quick-switches workspace) without
+losing fleet state. Deep links still work on the web build: `?role=driver`
+auto-signs-in to that workspace.
 
-| Role | Dashboard optimizes for |
-|---|---|
-| **Fleet Manager** (Ops) | Total oversight — utilization, condition mix, alert feed, dispatch health, live map |
-| **Dispatcher** | Load board with ETAs & at-risk flags, ready-to-dispatch vehicles with one-tap DISPATCH, driver availability with HOS remaining |
-| **Driver** | Personal cockpit — current trip, HOS clocks (11h day / 70h cycle), vehicle vitals, DVIR pre-trip checklist, eco coaching |
-| **Maintenance Manager** | Work-order pipeline (predicted → scheduled → in shop) with actions, worst-first health triage, active DTC codes, preventive vs corrective mix |
-| **Safety & Compliance** | Driver safety leaderboard, 30-day behavior breakdown, HOS at-risk drivers, ELD connectivity, violation register with fines exposure |
-| **Finance & Admin** | Fuel spend trend, cost structure, $/km blended, maintenance exposure, idle waste, IFTA quarterly estimate |
-| **Executive** | Utilization heatmap, on-time delivery, cost & CO2 trends, fleet mix, strategic focus (retention / green / cost control) |
+<p align="center">
+  <img src="docs/screenshots/00-login.png" alt="Login screen" width="720">
+</p>
+
+## Seven dashboards, seven different tools
+
+The same live telematics pipeline — **framed seven different ways**. Each
+dashboard has its own layout system and primary object, researched from how
+Samsara, Geotab, Motive and Fleetio actually build for these roles:
+
+| Role | Primary object | Dashboard pattern |
+|---|---|---|
+| **Fleet Manager** (Ops) | The fleet, live | Map-dominant command center — full-bleed live map, exception drawer, utilization & idle leaderboards |
+| **Dispatcher** | Jobs ↔ drivers | Kanban dispatch board over the load lifecycle (Unassigned → Assigned → En Route → At Risk → Delivered) with ranked-driver assignment matching |
+| **Driver** | My day / HOS clock | In-cab companion — one-tap duty-status switcher, three HOS gauges, assignment with POD steps, DVIR checklist, dispatch messages |
+| **Maintenance Manager** | Work-order queue | Shop control room — dense WO table with priority triage and row actions, PM-due intervals, DTC → work-order conversion, parts stock |
+| **Safety & Compliance** | Event triage | Safety inbox — AI-ranked event queue with coach / dismiss / recognize actions, coaching priority list, compliance tiles, ABC'S trends |
+| **Finance & Admin** | Cost ledgers | Chart-led cost center — fuel trend, cost structure, $/km league table with replacement verdicts, IFTA panel, RO approval queue |
+| **Executive** | The scorecard | Benchmark board — big-number tiles with delta + you-vs-segment-vs-top-10% bands, 12-month trends, division table, initiative trackers |
 
 | Dispatcher | Driver cockpit |
 |---|---|
@@ -49,9 +61,9 @@ the web URL) — the dashboard, modules and navigation all follow the persona.
 | <img src="docs/screenshots/21-finance.png" width="440"> | <img src="docs/screenshots/22-executive.png" width="440"> |
 
 <details>
-<summary>Driver workspace on mobile</summary>
+<summary>Driver workspace & login on mobile</summary>
 
-<img src="docs/screenshots/23-mobile-driver.png" width="240">
+<img src="docs/screenshots/23-mobile-driver.png" width="240"> <img src="docs/screenshots/24-mobile-login.png" width="240">
 </details>
 
 ## The compact design system
@@ -91,8 +103,14 @@ dense, information-rich console:
 
 ## Features
 
-- **7 role dashboards** — every persona (ops, dispatcher, driver, maintenance, safety, finance, executive) gets a dedicated board over the same live data; role-filtered navigation keeps each workspace focused
-- **Dashboard (Ops)** — live KPIs (on-route, alerts, safety, fuel, CO2, utilization), condition donut, real-time alert feed, active dispatches with ETAs, fleet speed stream
+- **Login screen** — 7 demo accounts (one per role), simulated auth, persistent sessions, `?role=` deep-link auto sign-in
+- **7 structurally-distinct role dashboards** — kanban dispatch board, map-first ops command center, driver in-cab companion, shop work-order queue, safety triage inbox, finance cost center, executive benchmark scorecard; role-filtered navigation keeps each workspace focused
+- **Sidebar account menu** — identity card opens workspace quick-switch chips + sign out; the active rail adopts the role's identity color
+- **Dispatcher actions** — assign board loads to HOS-ranked drivers (writes to the driver's message inbox and starts the leg)
+- **Shop actions** — convert DTC fault codes to work orders in one tap, assign techs, approve/start/close WOs, labor-hour tracking
+- **Safety triage** — coach / dismiss / recognize events, kudos from the leaderboard, coaching-priority ranking
+- **Finance gate** — repair orders over $500 queue for approval before work starts
+- **Dashboard (Ops)** — KPI strip with sparklines, full-bleed live map, exception feed drawer, utilization watch, idle leaderboard, asset health
 - **Fleet** — dense inventory grid with status/type filters; per-vehicle detail with **live telemetry gauges** (speed, fuel, engine temp), **IoT sensor panel** (cargo temp, humidity, TPMS, battery, camera, RFID), DTC diagnostics, predictive service, fuel history, refuel planning via closest-point
 - **Live tracking** — custom-painted city map: moving vehicle markers with heading, geofence zones, station landmarks, traveled-route rendering, at-risk highlighting, ETA supervision
 - **Drivers** — safety/eco/HOS scorecards, ELD status, behavior (harsh braking/accel, speeding, seatbelt), violations & fines, performance reports
