@@ -1,319 +1,333 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../core/app_state.dart';
+import '../core/fleet_state.dart';
+import '../core/models.dart';
 import '../core/theme.dart';
-import '../ui/adaptive_scaffold.dart';
 import '../ui/charts.dart';
 import '../ui/widgets.dart';
 
+/// Business intelligence (guide p. 26–27): utilization heatmap, cost analytics,
+/// safety leaderboard, green-initiative tracking and emerging-tech impact.
 class InsightsScreen extends StatelessWidget {
   const InsightsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final wide = MediaQuery.sizeOf(context).width >= 1080;
-    final last14 = state.completionsPerDay(14);
-    final total14 = last14.fold(0, (a, b) => a + b);
-    final best = last14.fold(0, math.max);
-    final avg = (total14 / 14 * 10).round() / 10;
+    final p = context.pal;
+    if (!state.loaded) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
 
-    return PagePadding(
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: PageHeader(
-              title: 'Insights',
-              subtitle: 'Momentum over the last 14 days',
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: _statRow(context, total14, avg, best, state.streak,
-                (state.completionRate7d * 100).round()),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: K.m)),
-          SliverToBoxAdapter(
-            child: _trendCard(context, last14),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: K.m)),
-          SliverToBoxAdapter(
-            child: wide
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: _weekCard(context, state)),
-                      const SizedBox(width: K.m),
-                      Expanded(child: _categoryCard(context, state)),
-                    ],
-                  )
-                : Column(children: [
-                    _weekCard(context, state),
-                    const SizedBox(height: K.m),
-                    _categoryCard(context, state),
-                  ]),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: K.l)),
-        ],
-      ),
-    );
-  }
+    final wide = MediaQuery.sizeOf(context).width >= 980;
+    final costPerDay = state.fuelCostPerDay(14);
 
-  Widget _statRow(
-      BuildContext context, int total, double avg, int best, int streak, int rate) {
-    return Row(
+    // Emerging tech impact (guide ch. 03: productivity with custom software).
+    final downtimeAvoided = state.maintenance
+        .where((m) => m.status == MaintenanceStatus.completed)
+        .fold<double>(0, (s, m) => s + m.downtimeHours);
+    final predictedOpen = state.maintenance.where((m) => m.status == MaintenanceStatus.predicted).length;
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: K.xxl),
       children: [
-        Expanded(child: _Stat('COMPLETED 14D', '$total', 'tasks')),
-        const SizedBox(width: K.m),
-        Expanded(child: _Stat('DAILY AVERAGE', '$avg', 'per day')),
-        const SizedBox(width: K.m),
-        Expanded(child: _Stat('BEST DAY', '$best', 'in one day')),
-        const SizedBox(width: K.m),
-        Expanded(child: _Stat('CURRENT STREAK', '$streak', 'days')),
-        const SizedBox(width: K.m),
-        Expanded(child: _Stat('7D RATE', '$rate%', 'completion')),
+        PageHeader(
+          title: 'Insights & analytics',
+          subtitle: 'Fleet business intelligence · predictive analysis',
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: K.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Impact KPI row.
+              Row(
+                children: [
+                  Expanded(
+                    child: KpiTile(
+                      label: 'Fleet utilization',
+                      value: (state.fleetUtilization * 100).toStringAsFixed(0),
+                      unit: '%',
+                      icon: Icons.speed_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: K.xs),
+                  Expanded(
+                    child: KpiTile(
+                      label: 'On-time delivery',
+                      value: (state.avgOnTimeRate * 100).toStringAsFixed(0),
+                      unit: '%',
+                      icon: Icons.schedule_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: K.xs),
+                  Expanded(
+                    child: KpiTile(
+                      label: 'Downtime avoided',
+                      value: downtimeAvoided.toStringAsFixed(0),
+                      unit: 'h',
+                      icon: Icons.build_circle_outlined,
+                      accent: p.satisfactory,
+                    ),
+                  ),
+                  const SizedBox(width: K.xs),
+                  Expanded(
+                    child: KpiTile(
+                      label: 'AI predictions open',
+                      value: '$predictedOpen',
+                      icon: Icons.auto_awesome,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: K.md),
+
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _heatCard(context, state)),
+                    const SizedBox(width: K.md),
+                    Expanded(child: _rightColumn(context, state, costPerDay)),
+                  ],
+                )
+              else ...[
+                _heatCard(context, state),
+                const SizedBox(height: K.md),
+                _rightColumn(context, state, costPerDay),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
 
-  Widget _trendCard(BuildContext context, List<int> values) {
-    final scheme = Theme.of(context).colorScheme;
-    final maxV = values.fold(1, math.max);
-    return AppCard(
+  Widget _heatCard(BuildContext context, AppState state) {
+    final p = context.pal;
+    return KCard(
+      padding: const EdgeInsets.all(K.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionHeader(
-            'Momentum',
-            trailing: Text(
-              'max $maxV/day',
-              style: microLabel(context).copyWith(color: scheme.primary),
-            ),
+            title: 'Dispatch utilization',
+            eyebrow: 'Hour × day · last week pattern',
           ),
-          const SizedBox(height: K.xs),
-          SizedBox(
-            height: 150,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (var i = 0; i < values.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 5),
-                  Expanded(
-                    child: Tooltip(
-                      message:
-                          '${_dayLabel(i, values.length)}: ${values[i]}',
-                      waitDuration: const Duration(milliseconds: 300),
-                      child: _TrendBar(
-                        value: values[i],
-                        max: maxV,
-                        isToday: i == values.length - 1,
+          Heatmap(data: state.utilizationHeat),
+          const SizedBox(height: K.sm),
+          Row(
+            children: [
+              Text(
+                'low',
+                style: TextStyle(fontSize: K.caption, color: p.textTertiary, fontFamily: 'Inter'),
+              ),
+              const SizedBox(width: K.xs),
+              Expanded(
+                child: Row(
+                  children: [
+                    for (var i = 0; i <= 4; i++)
+                      Expanded(
+                        child: Container(
+                          height: 6,
+                          margin: const EdgeInsets.only(right: 1),
+                          decoration: BoxDecoration(
+                            color: Color.lerp(p.surfaceSunken, p.primary, i / 4),
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
                       ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: K.xs),
+              Text(
+                'high',
+                style: TextStyle(fontSize: K.caption, color: p.textTertiary, fontFamily: 'Inter'),
+              ),
+            ],
+          ),
+          const Divider(),
+          const SizedBox(height: K.xs),
+          SectionHeader(
+            title: 'Safety leaderboard',
+            eyebrow: 'Driver performance reports',
+          ),
+          for (var i = 0; i < state.driverLeaderboard.length && i < 6; i++)
+            LabelBar(
+              label: state.driverLeaderboard[i].name,
+              value: state.driverLeaderboard[i].safetyScore / 100,
+              valueText: state.driverLeaderboard[i].safetyScore.toStringAsFixed(0),
+              color: state.driverLeaderboard[i].safetyScore >= 90
+                  ? p.good
+                  : state.driverLeaderboard[i].safetyScore >= 78
+                      ? p.satisfactory
+                      : p.urgent,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _rightColumn(BuildContext context, AppState state, List<double> costPerDay) {
+    final p = context.pal;
+    return Column(
+      children: [
+        // Cost analytics.
+        KCard(
+          padding: const EdgeInsets.all(K.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(
+                title: 'Cost structure — 14 days',
+                eyebrow: 'Fuel + maintenance exposure',
+              ),
+              MiniBars(values: costPerDay, height: 64, highlightIndex: costPerDay.length - 1),
+              const SizedBox(height: K.sm),
+              MetricRow(label: 'Fuel spend (30d)', value: usd(state.fuelCost30d)),
+              MetricRow(label: 'Maintenance exposure', value: usd(state.openMaintenanceCost), valueColor: p.accent),
+              MetricRow(
+                label: 'Cost per km (est.)',
+                value:
+                    '\$${(state.kmDrivenToday > 0 ? state.litersConsumedToday * 1.58 / state.kmDrivenToday : 0.42).toStringAsFixed(2)}',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: K.md),
+
+        // Green initiatives (guide p. 9).
+        KCard(
+          padding: const EdgeInsets.all(K.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(
+                title: 'Green initiatives',
+                eyebrow: 'Carbon footprint · eco program',
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Gauge(
+                      value: state.avgEcoScore / 100,
+                      color: p.satisfactory,
+                      label: state.avgEcoScore.toStringAsFixed(0),
+                      sublabel: 'ECO AVG',
+                      size: 72,
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        MetricRow(label: 'CO2 today', value: '${state.co2KgToday.round()} kg'),
+                        MetricRow(label: 'CO2 30 days', value: '${state.co2Kg30d.round()} kg'),
+                        MetricRow(label: 'Idle waste today', value: usd(state.idleCostToday), valueColor: p.accent),
+                      ],
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-          const SizedBox(height: K.s),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_dayLabel(0, values.length),
-                  style: microLabel(context).copyWith(fontSize: 9)),
-              Text(_dayLabel(values.length - 1, values.length),
-                  style: microLabel(context).copyWith(fontSize: 9)),
+              ),
+              const SizedBox(height: K.sm),
+              Text(
+                'Telematics-guided eco-driving and idle reduction keep the fleet on its quarterly emission-reduction track. Predictive maintenance further cuts waste from catastrophic failures and emergency tows.',
+                style: TextStyle(
+                  fontSize: K.body,
+                  height: 1.45,
+                  color: p.textSecondary,
+                  fontFamily: 'Inter',
+                ),
+              ),
             ],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: K.md),
+
+        // Emerging tech impact.
+        KCard(
+          padding: const EdgeInsets.all(K.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(
+                title: 'Emerging tech impact',
+                eyebrow: 'IoT · AI · spatial ops',
+              ),
+              _techRow(
+                context,
+                icon: Icons.sensors_rounded,
+                title: 'IoT telematics',
+                detail: '${state.vehicles.where((v) => v.status != VehicleStatus.offline).length}/${state.vehicles.length} units streaming live sensor data',
+              ),
+              _techRow(
+                context,
+                icon: Icons.auto_awesome,
+                title: 'AI predictive maintenance',
+                detail: '${state.maintenance.where((m) => m.kind == MaintenanceKind.preventive && m.status != MaintenanceStatus.completed).length} open AI-flagged services',
+              ),
+              _techRow(
+                context,
+                icon: Icons.my_location_rounded,
+                title: 'Geofencing & spatial ops',
+                detail: '${state.geofences.length} zones monitored · closest-point refuel planning active',
+              ),
+              _techRow(
+                context,
+                icon: Icons.dashboard_customize_rounded,
+                title: 'Remote dashboards',
+                detail: 'Real-time KPIs refreshed every 2 seconds across devices',
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  static String _dayLabel(int indexFromOldest, int total) {
-    final d = DateTime.now().subtract(Duration(days: total - 1 - indexFromOldest));
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return '${months[d.month - 1]} ${d.day}';
-  }
-
-  Widget _weekCard(BuildContext context, AppState state) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _techRow(BuildContext context, {required IconData icon, required String title, required String detail}) {
+    final p = context.pal;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: K.xs),
+      child: Row(
         children: [
-          const SectionHeader('Weekday rhythm'),
-          const SizedBox(height: K.xs),
-          WeeklyBarChart(data: state.weekdayCompletions(), height: 150),
-          const SizedBox(height: K.s),
-          Text('Completions per weekday · last 7 days',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall!
-                  .copyWith(fontSize: 10.5)),
-        ],
-      ),
-    );
-  }
-
-  Widget _categoryCard(BuildContext context, AppState state) {
-    final cats = state.categoryCounts();
-    final active = state.activeTasks.length;
-    final slices = <(Color, int)>[
-      for (final c in cats.take(6)) (K.categoryColor(c.category), c.count),
-    ];
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionHeader('Where work sits'),
-          const SizedBox(height: K.m),
-          if (cats.isEmpty)
-            Text('No active tasks to distribute.',
-                style: Theme.of(context).textTheme.bodySmall!)
-          else
-            Wrap(
-              spacing: K.xl,
-              runSpacing: K.l,
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: p.primarySoft,
+              borderRadius: BorderRadius.circular(K.rSm),
+            ),
+            child: Icon(icon, size: 13, color: p.primary),
+          ),
+          const SizedBox(width: K.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DonutChart(
-                  slices: slices,
-                  centerValue: '$active',
-                  centerLabel: 'ACTIVE',
-                  size: 128,
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: K.label,
+                    fontWeight: FontWeight.w700,
+                    color: p.text,
+                    fontFamily: 'Inter',
+                  ),
                 ),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: Column(
-                    children: [
-                      for (final c in cats)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 7),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: BoxDecoration(
-                                  color: K.categoryColor(c.category),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 7),
-                              Expanded(
-                                child: Text(c.category,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                        letterSpacing: -0.1)),
-                              ),
-                              Text('${c.count}',
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                        ),
-                    ],
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: K.caption,
+                    color: p.textTertiary,
+                    fontFamily: 'Inter',
                   ),
                 ),
               ],
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat(this.label, this.value, this.unit);
-
-  final String label;
-  final String value;
-  final String unit;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: microLabel(context)),
-          const SizedBox(height: 7),
-          Text(
-            value,
-            style: TextStyle(
-              fontFamily: 'InterDisplay',
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.8,
-              height: 1.05,
-              color: scheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            unit,
-            style: TextStyle(
-              fontFamily: K.fontFamily,
-              fontSize: 10.5,
-              color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
-            ),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _TrendBar extends StatelessWidget {
-  const _TrendBar({
-    required this.value,
-    required this.max,
-    required this.isToday,
-  });
-
-  final int value;
-  final int max;
-  final bool isToday;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final h = (value / max) * 118;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        if (value > 0)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Text(
-              '$value',
-              style: TextStyle(
-                fontFamily: K.fontFamily,
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                color: isToday
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant.withValues(alpha: 0.8),
-              ),
-            ),
-          ),
-        Container(
-          height: h.clamp(3.0, double.infinity),
-          decoration: BoxDecoration(
-            color: value == 0
-                ? scheme.onSurfaceVariant.withValues(alpha: 0.13)
-                : isToday
-                    ? scheme.primary
-                    : scheme.primary.withValues(alpha: 0.5),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
-          ),
-        ),
-      ],
     );
   }
 }

@@ -1,8 +1,8 @@
 name: kompact
-description: "Kompact — a compact-design productivity suite. Full functionality in minimal space."
+description: "Kompact FMS — compact-design fleet management: live tracking, drivers, fuel, predictive maintenance, safety & compliance."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.0.0+1
 
 environment:
   sdk: ^3.13.4

@@ -2,360 +2,570 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../core/app_state.dart';
 import '../core/theme.dart';
+import 'widgets.dart';
 
-/// Animated rounded bar chart for weekday completions.
-class WeeklyBarChart extends StatefulWidget {
-  const WeeklyBarChart({super.key, required this.data, this.height = 132});
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom-painted compact charts. No chart dependencies — full control of the
+// dense look: 2px strokes, tiny labels, hairline grids.
+// ─────────────────────────────────────────────────────────────────────────────
 
-  final List<DayCount> data;
-  final double height;
-
-  @override
-  State<WeeklyBarChart> createState() => _WeeklyBarChartState();
-}
-
-class _WeeklyBarChartState extends State<WeeklyBarChart>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 650),
-    )..forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final t = Curves.easeOutCubic.transform(_controller.value);
-        return SizedBox(
-          height: widget.height,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              for (var i = 0; i < widget.data.length; i++) ...[
-                if (i > 0) const SizedBox(width: K.s),
-                Expanded(child: _bar(context, widget.data[i], t, scheme)),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _bar(BuildContext context, DayCount d, double t, ColorScheme scheme) {
-    final maxCount = widget.data.map((e) => e.count).fold(1, math.max);
-    final h = (d.count / maxCount) * 86 * t;
-    final barColor = d.count == 0
-        ? scheme.onSurfaceVariant.withValues(alpha: 0.15)
-        : d.isToday
-            ? scheme.primary
-            : scheme.primary.withValues(alpha: 0.45);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        if (d.count > 0)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              '${d.count}',
-              style: TextStyle(
-                fontFamily: K.fontFamily,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        Container(
-          height: h.clamp(4.0, double.infinity),
-          decoration: BoxDecoration(
-            color: barColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          d.label,
-          style: TextStyle(
-            fontFamily: K.fontFamily,
-            fontSize: 10,
-            fontWeight: d.isToday ? FontWeight.w700 : FontWeight.w500,
-            letterSpacing: 0.3,
-            color: d.isToday ? scheme.primary : scheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Animated donut chart for category distribution.
-class DonutChart extends StatefulWidget {
-  const DonutChart({
-    super.key,
-    required this.slices,
-    required this.centerValue,
-    required this.centerLabel,
-    this.size = 132,
-  });
-
-  final List<(Color, int)> slices;
-  final String centerValue;
-  final String centerLabel;
-  final double size;
-
-  @override
-  State<DonutChart> createState() => _DonutChartState();
-}
-
-class _DonutChartState extends State<DonutChart>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    )..forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) => CustomPaint(
-        size: Size(widget.size, widget.size),
-        painter: _DonutPainter(
-          slices: widget.slices,
-          progress: Curves.easeOutCubic.transform(_controller.value),
-          track: scheme.onSurfaceVariant.withValues(alpha: 0.10),
-        ),
-        child: SizedBox(
-          width: widget.size,
-          height: widget.size,
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.centerValue,
-                  style: TextStyle(
-                    fontFamily: 'InterDisplay',
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.8,
-                    color: scheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  widget.centerLabel,
-                  style: microLabel(context).copyWith(
-                    color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
-                    fontSize: 9,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DonutPainter extends CustomPainter {
-  _DonutPainter({
-    required this.slices,
-    required this.progress,
-    required this.track,
-  });
-
-  final List<(Color, int)> slices;
-  final double progress;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final total = slices.map((s) => s.$2).fold(0, (a, b) => a + b);
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 9;
-    const stroke = 11.0;
-    final gap = slices.length > 1 ? 0.05 : 0.0; // radians between slices
-
-    final trackPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..color = track;
-    canvas.drawCircle(center, radius, trackPaint);
-
-    if (total == 0 || progress == 0) return;
-
-    var start = -math.pi / 2;
-    for (final (color, value) in slices) {
-      final sweep = (value / total) * 2 * math.pi * progress;
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round;
-      final effectiveGap = sweep > 0.15 ? gap : 0;
-      final paintColored = paint..color = color;
-      canvas.drawArc(Rect.fromCircle(center: center, radius: radius),
-          start + effectiveGap / 2, sweep - effectiveGap, false, paintColored);
-      start += sweep;
-    }
-  }
-
-  @override
-  bool shouldRepaint(_DonutPainter old) =>
-      old.slices != slices || old.progress != progress;
-}
-
-/// Tiny inline sparkline for KPI cards.
+/// Inline sparkline for live series.
 class Sparkline extends StatelessWidget {
-  const Sparkline({super.key, required this.values, this.width = 74, this.height = 26});
-
-  final List<int> values;
-  final double width;
+  final List<double> values;
+  final Color? color;
   final double height;
+  final bool fill;
+
+  const Sparkline({super.key, required this.values, this.color, this.height = 30, this.fill = true});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return CustomPaint(
-      size: Size(width, height),
-      painter: _SparkPainter(
-        values: values,
-        color: scheme.primary,
-        fill: scheme.primary.withValues(alpha: 0.12),
+    final p = context.pal;
+    if (values.length < 2) return SizedBox(height: height);
+    return SizedBox(
+      height: height,
+      child: LayoutBuilder(
+        builder: (context, c) => CustomPaint(
+          size: c.biggest,
+          painter: _SparkPainter(
+            values: values,
+            stroke: color ?? p.primary,
+            fillArea: fill,
+            fillGradient: true,
+          ),
+        ),
       ),
     );
   }
 }
 
 class _SparkPainter extends CustomPainter {
-  _SparkPainter({required this.values, required this.color, required this.fill});
+  final List<double> values;
+  final Color stroke;
+  final bool fillArea;
+  final bool fillGradient;
 
-  final List<int> values;
-  final Color color;
-  final Color fill;
+  _SparkPainter({required this.values, required this.stroke, required this.fillArea, this.fillGradient = false});
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (values.length < 2) return;
-    final vals = values;
-    final maxV = vals.fold(1, math.max).toDouble();
+    final minV = values.reduce(math.min);
+    final maxV = values.reduce(math.max);
+    final span = (maxV - minV) == 0 ? 1.0 : maxV - minV;
+    final h = size.height - 3;
     final w = size.width;
-    final h = size.height;
-    final dx = w / (vals.length - 1);
 
-    final points = <Offset>[];
-    for (var i = 0; i < vals.length; i++) {
-      final y = h - 3 - (vals[i] / maxV) * (h - 6);
-      points.add(Offset(i * dx, y));
+    final pts = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final x = w * i / (values.length - 1);
+      final y = 1.5 + h - (values[i] - minV) / span * h;
+      pts.add(Offset(x, y));
     }
 
-    final path = Path()..moveTo(points.first.dx, points.first.dy);
-    for (var i = 1; i < points.length; i++) {
-      path.lineTo(points[i].dx, points[i].dy);
+    final path = Path()..addPolygon(pts, false);
+    final strokePaint = Paint()
+      ..color = stroke
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(path, strokePaint);
+
+    if (fillArea) {
+      final area = Path.from(path)
+        ..lineTo(w, size.height)
+        ..lineTo(0, size.height)
+        ..close();
+      final paint = Paint()
+        ..style = PaintingStyle.fill
+        ..shader = fillGradient
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [stroke.withValues(alpha: 0.22), stroke.withValues(alpha: 0.02)],
+              ).createShader(Offset.zero & size)
+            : null
+        ..color = stroke.withValues(alpha: 0.12);
+      canvas.drawPath(area, paint);
     }
 
-    final areaPath = Path.from(path)
-      ..lineTo(points.last.dx, h)
-      ..lineTo(points.first.dx, h)
-      ..close();
-
-    canvas.drawPath(areaPath, Paint()..color = fill);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..color = color,
-    );
-    canvas.drawCircle(points.last, 2.4, Paint()..color = color);
+    // End dot.
+    canvas.drawCircle(pts.last, 2, Paint()..color = stroke);
   }
 
   @override
   bool shouldRepaint(_SparkPainter old) =>
-      old.values != values || old.color != color;
+      old.values.length != values.length || old.values.last != values.last || old.stroke != stroke;
 }
 
-/// GitHub-style activity strip: last [weeks] weeks × 7 days of completions.
-class ActivityStrip extends StatelessWidget {
-  const ActivityStrip({super.key, required this.values, this.weeks = 14});
+/// Compact vertical bar chart with optional last-bar highlight + baseline.
+class MiniBars extends StatelessWidget {
+  final List<double> values;
+  final Color? color;
+  final Color? highlightColor;
+  final int highlightIndex;
+  final double height;
 
-  /// Oldest-first daily completion counts, length = weeks * 7.
-  final List<int> values;
-  final int weeks;
+  const MiniBars({
+    super.key,
+    required this.values,
+    this.color,
+    this.highlightColor,
+    this.highlightIndex = -1,
+    this.height = 44,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final accent = scheme.primary;
-    const cell = 9.0;
-    const gap = 2.5;
-
-    // values is oldest-first; group into week columns (Mon..Sun rows).
-    final columns = <List<int>>[];
-    for (var i = 0; i < values.length; i += 7) {
-      columns.add(values.sublist(
-          i, math.min(i + 7, values.length)));
-    }
-
+    final p = context.pal;
     return SizedBox(
-      height: 7 * (cell + gap),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          for (final week in columns)
-            Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                for (final v in week)
-                  Container(
-                    width: cell,
-                    height: cell,
-                    decoration: BoxDecoration(
-                      color: v == 0
-                          ? scheme.onSurfaceVariant.withValues(alpha: 0.10)
-                          : v == 1
-                              ? accent.withValues(alpha: 0.35)
-                              : v == 2
-                                  ? accent.withValues(alpha: 0.60)
-                                  : accent,
-                      borderRadius: BorderRadius.circular(2),
+      height: height,
+      child: LayoutBuilder(
+        builder: (context, c) => CustomPaint(
+          size: c.biggest,
+          painter: _BarsPainter(
+            values: values,
+            base: color ?? p.primary,
+            hi: highlightColor ?? p.accent,
+            hiIndex: highlightIndex,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BarsPainter extends CustomPainter {
+  final List<double> values;
+  final Color base;
+  final Color hi;
+  final int hiIndex;
+
+  _BarsPainter({required this.values, required this.base, required this.hi, required this.hiIndex});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) return;
+    final maxV = values.reduce(math.max);
+    final span = maxV == 0 ? 1.0 : maxV;
+    final gap = math.max(1.0, size.width * 0.02);
+    final bw = (size.width - gap * (values.length - 1)) / values.length;
+    for (var i = 0; i < values.length; i++) {
+      final h = values[i] / span * (size.height - 2);
+      final rect = Rect.fromLTWH(i * (bw + gap), size.height - h, bw, h);
+      final c = i == hiIndex ? hi : base;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(1.5)),
+        Paint()..color = i == hiIndex ? c : c.withValues(alpha: 0.75),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BarsPainter old) => old.values != values;
+}
+
+/// Horizontal stacked distribution bar (e.g. condition mix).
+class DistributionBar extends StatelessWidget {
+  final List<(double value, Color color, String label)> segments;
+  final double height;
+  final void Function(int index)? onTap;
+
+  const DistributionBar({super.key, required this.segments, this.height = 8, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    final total = segments.fold<double>(0, (s, e) => s + e.$1);
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (total == 0) {
+          return Container(
+            height: height,
+            decoration: BoxDecoration(color: p.surfaceSunken, borderRadius: BorderRadius.circular(3)),
+          );
+        }
+        var x = 0.0;
+        return SizedBox(
+          height: height,
+          width: c.maxWidth,
+          child: Stack(
+            children: [
+              for (var i = 0; i < segments.length; i++)
+                Positioned(
+                  left: x,
+                  width: segments[i].$1 / total * c.maxWidth,
+                  top: 0,
+                  bottom: 0,
+                  child: GestureDetector(
+                    onTap: onTap == null ? null : () => onTap!(i),
+                    child: Tooltip(
+                      message: '${segments[i].$3}: ${segments[i].$1.round()}',
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 0.5),
+                        decoration: BoxDecoration(color: segments[i].$2, borderRadius: BorderRadius.circular(2)),
+                      ),
                     ),
                   ),
-              ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Donut chart with center label — condition mix / severity mix.
+class Donut extends StatelessWidget {
+  final List<(double value, Color color)> slices;
+  final String? centerTop;
+  final String? centerBottom;
+  final double size;
+
+  const Donut({
+    super.key,
+    required this.slices,
+    this.centerTop,
+    this.centerBottom,
+    this.size = 108,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          CustomPaint(
+            size: Size.square(size),
+            painter: _DonutPainter(slices: slices, track: p.surfaceSunken),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (centerTop != null)
+                Text(
+                  centerTop!,
+                  style: TextStyle(
+                    fontSize: K.headline,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                    letterSpacing: -0.4,
+                    color: p.text,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+              if (centerBottom != null)
+                Text(
+                  centerBottom!,
+                  style: TextStyle(
+                    fontSize: K.caption,
+                    fontWeight: FontWeight.w600,
+                    color: p.textTertiary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DonutPainter extends CustomPainter {
+  final List<(double, Color)> slices;
+  final Color track;
+
+  _DonutPainter({required this.slices, required this.track});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final stroke = radius * 0.3;
+    final total = slices.fold<double>(0, (s, e) => s + e.$1);
+    final rect = Rect.fromCircle(center: c, radius: radius - stroke / 2);
+
+    canvas.drawCircle(
+      c,
+      radius - stroke / 2,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..color = track,
+    );
+
+    if (total == 0) return;
+    var start = -math.pi / 2;
+    for (final s in slices) {
+      final sweep = s.$1 / total * 2 * math.pi;
+      if (sweep <= 0) continue;
+      canvas.drawArc(
+        rect,
+        start,
+        sweep - 0.04,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = stroke
+          ..strokeCap = StrokeCap.butt
+          ..color = s.$2,
+      );
+      start += sweep;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DonutPainter old) => old.slices != slices;
+}
+
+/// Radial gauge — fuel level, score dials.
+class Gauge extends StatelessWidget {
+  final double value; // 0..1
+  final Color color;
+  final String label;
+  final String? sublabel;
+  final double size;
+
+  const Gauge({
+    super.key,
+    required this.value,
+    required this.color,
+    required this.label,
+    this.sublabel,
+    this.size = 84,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          CustomPaint(
+            size: Size.square(size),
+            painter: _GaugePainter(value: value.clamp(0, 1), color: color, track: p.surfaceSunken),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: K.title,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  color: p.text,
+                  fontFamily: 'Inter',
+                ),
+              ),
+              if (sublabel != null)
+                Text(
+                  sublabel!,
+                  style: TextStyle(
+                    fontSize: K.micro,
+                    fontWeight: FontWeight.w600,
+                    color: p.textTertiary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GaugePainter extends CustomPainter {
+  final double value;
+  final Color color;
+  final Color track;
+
+  _GaugePainter({required this.value, required this.color, required this.track});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final stroke = radius * 0.16;
+    final rect = Rect.fromCircle(center: c, radius: radius - stroke / 2 - 1);
+
+    final trackPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..color = track;
+    canvas.drawArc(rect, math.pi * 0.75, math.pi * 1.5, false, trackPaint);
+
+    final fill = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..color = color;
+    canvas.drawArc(rect, math.pi * 0.75, math.pi * 1.5 * value, false, fill);
+  }
+
+  @override
+  bool shouldRepaint(_GaugePainter old) => old.value != value;
+}
+
+/// Utilization heatmap: 7 days × 24 hours.
+class Heatmap extends StatelessWidget {
+  final List<List<double>> data; // [7][24], 0..1
+  final double cellGap;
+
+  const Heatmap({super.key, required this.data, this.cellGap = 2});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 26,
+              child: Text('', style: TextStyle(fontSize: K.micro, fontFamily: 'Inter')),
             ),
+            Expanded(child: _hourAxis(p)),
+          ],
+        ),
+        for (var d = 0; d < 7; d++)
+          Row(
+            children: [
+              SizedBox(
+                width: 26,
+                child: Text(
+                  days[d],
+                  style: TextStyle(
+                    fontSize: K.micro,
+                    fontWeight: FontWeight.w600,
+                    color: p.textTertiary,
+                    fontFamily: 'Inter',
+                  ),
+                ),
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, c) {
+                    final cw = (c.maxWidth - cellGap * 23) / 24;
+                    return SizedBox(
+                      height: cw + 2,
+                      child: Row(
+                        children: [
+                          for (var h = 0; h < 24; h++)
+                            Expanded(
+                              child: Tooltip(
+                                message: '${days[d]} ${h.toString().padLeft(2, '0')}:00 · ${(data[d][h] * 100).round()}% utilized',
+                                child: Container(
+                                  margin: EdgeInsets.only(right: h == 23 ? 0 : cellGap),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(1.5),
+                                    color: Color.lerp(
+                                      p.surfaceSunken,
+                                      p.primary,
+                                      data[d][h].clamp(0, 1) * 0.95,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _hourAxis(KPallette p) => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            for (final h in const ['00', '06', '12', '18', '23'])
+              Text(
+                h,
+                style: TextStyle(
+                  fontSize: K.micro,
+                  fontWeight: FontWeight.w600,
+                  color: p.textTertiary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+          ],
+        ),
+      );
+}
+
+/// Tiny horizontal bar with label + value — driver leaderboard rows.
+class LabelBar extends StatelessWidget {
+  final String label;
+  final double value; // 0..1
+  final String valueText;
+  final Color color;
+
+  const LabelBar({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.valueText,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: K.xxs + 1),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 112,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: K.label,
+                color: p.textSecondary,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'Inter',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            child: KProgress(value: value, color: color),
+          ),
+          const SizedBox(width: K.xs + 2),
+          SizedBox(
+            width: 40,
+            child: Text(
+              valueText,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: K.label,
+                color: p.text,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'Inter',
+              ),
+            ),
+          ),
         ],
       ),
     );

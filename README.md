@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/screenshots/dashboard-dark.png" alt="Kompact" width="880">
+  <img src="docs/screenshots/01-dashboard-light.png" alt="Kompact FMS" width="880">
 </p>
 
-<h1 align="center">Kompact</h1>
+<h1 align="center">Kompact FMS</h1>
 
 <p align="center">
-  <strong>A compact-design productivity suite.</strong><br>
-  Full functionality in minimal space — built with Flutter for 6 targets from one codebase.
+  <strong>A compact-design fleet management system.</strong><br>
+  Live tracking, drivers, fuel, predictive maintenance, safety & compliance — built with Flutter for 6 targets from one codebase.
 </p>
 
 <p align="center">
@@ -18,46 +18,60 @@
 
 ---
 
+Implements the must-have feature set from the fleet-management playbook —
+*driver management, routing & tracking, fuel management, predictive maintenance,
+fleet safety & compliance* — on a live-simulated telematics pipeline with an
+emphasis on emerging tech (IoT sensors, AI predictions, geofencing/spatial ops,
+remote dashboards).
+
 ## The compact design system
 
-Kompact is a demonstration of **compact design done right** — systems that use less
-physical space while keeping full functionality:
+Compact design = **less physical space, full functionality**. Every screen is a
+dense, information-rich console:
 
 | Principle | Implementation |
 |---|---|
-| **4px micro-grid** | All spacing snaps to 4 / 8 / 12 / 16 / 24 |
-| **Tight type scale** | Inter: body 13px, captions 11px, uppercase 10px micro-labels |
+| **2px micro-grid** | Spacing snaps to 2 / 4 / 6 / 8 / 12 / 16 / 20 / 28 |
+| **Tight type scale** | Inter: body 12px, labels 11px, 9px uppercase micro-chips |
 | **Hairline over shadow** | 1px borders instead of elevation — calmer, denser surfaces |
-| **One accent hue** | 6 switchable accents; everything else stays neutral |
-| **Density as a feature** | `VisualDensity.compact` + 34px controls (toggleable to comfortable) |
-| **Adaptive shell** | 68px icon rail on desktop → slim bottom bar on phones |
-| **Info-per-pixel** | KPI cards, sparklines, heatmap strip, donut charts — zero dead space |
+| **Status as color + text** | Good / Satisfactory / Urgent / Critical ladder with icons — never color alone |
+| **Density as a feature** | `VisualDensity.compact`, 26–32px rows, toggleable |
+| **Adaptive shell** | Expanded rail → icon rail → bottom bar + More sheet |
+| **Info-per-pixel** | KPI tiles, sparklines, gauges, donut, heatmap, live map — zero dead space |
 
-## Screenshots
+## Screens
 
-| Dashboard | Tasks |
+| Dashboard | Live tracking |
 |---|---|
-| <img src="docs/screenshots/dashboard-wide.png" width="440"> | <img src="docs/screenshots/tasks-wide.png" width="440"> |
-| **Notes** | **Insights** |
-| <img src="docs/screenshots/notes-wide.png" width="440"> | <img src="docs/screenshots/insights-wide.png" width="440"> |
+| <img src="docs/screenshots/01-dashboard-light.png" width="440"> | <img src="docs/screenshots/04-tracking.png" width="440"> |
+| **Fleet + vehicle telemetry** | **Alert center** |
+| <img src="docs/screenshots/03-vehicle-detail.png" width="440"> | <img src="docs/screenshots/07-alerts.png" width="440"> |
 
 <details>
-<summary>More (Settings, mobile, dark)</summary>
+<summary>More (drivers, maintenance, fuel, insights, settings, dark, mobile)</summary>
 
-| Settings | Mobile |
+| Drivers | Maintenance |
 |---|---|
-| <img src="docs/screenshots/settings-wide.png" width="440"> | <img src="docs/screenshots/dashboard-mobile.png" width="240"> |
+| <img src="docs/screenshots/05-drivers.png" width="440"> | <img src="docs/screenshots/08-maintenance.png" width="440"> |
+| **Fuel** | **Insights** |
+| <img src="docs/screenshots/09-fuel.png" width="440"> | <img src="docs/screenshots/10-insights.png" width="440"> |
+| **Dark** | **Mobile** |
+| <img src="docs/screenshots/13-dashboard-dark.png" width="440"> | <img src="docs/screenshots/14-mobile-dashboard.png" width="240"> |
 </details>
 
 ## Features
 
-- **Dashboard** — animated KPI counters, 14-week activity heatmap, weekly bars, category donut, focus list
-- **Tasks** — full CRUD, priorities, categories, due dates, search, 5 filters, smart grouping, undo on delete
-- **Notes** — color-tinted quick notes with search and editing
-- **Insights** — 14-day momentum, weekday rhythm, category load, streaks and rates
-- **Settings** — theme mode, 6 accents, density control, JSON export, demo data, wipe
+- **Dashboard** — live KPIs (on-route, alerts, safety, fuel, CO2, utilization), condition donut, real-time alert feed, active dispatches with ETAs, fleet speed stream
+- **Fleet** — dense inventory grid with status/type filters; per-vehicle detail with **live telemetry gauges** (speed, fuel, engine temp), **IoT sensor panel** (cargo temp, humidity, TPMS, battery, camera, RFID), DTC diagnostics, predictive service, fuel history, refuel planning via closest-point
+- **Live tracking** — custom-painted city map: moving vehicle markers with heading, geofence zones, station landmarks, traveled-route rendering, at-risk highlighting, ETA supervision
+- **Drivers** — safety/eco/HOS scorecards, ELD status, behavior (harsh braking/accel, speeding, seatbelt), violations & fines, performance reports
+- **Alerts** — severity feed with acknowledge/resolve workflow, **SOS roadside-assistance dispatch**, collision reports with facts (impact speed, airbags, video)
+- **Maintenance** — corrective vs preventive pipeline, **AI-flagged predictions with confidence %**, schedule/start/complete actions, downtime & cost exposure
+- **Fuel** — 30-day spend trend, per-vehicle consumption ranking, eco-driving leaderboard, idle-waste watch
+- **Insights** — hour×day utilization heatmap, safety leaderboard, cost structure, green-initiative tracker, emerging-tech impact
+- **Live simulation** — a 2-second telematics tick moves vehicles along routes, burns fuel, accumulates HOS and raises real-time alerts (pause / 0.5–4× speed in Settings)
 - **Persistence** — everything stored locally via `shared_preferences` (works on all 6 targets)
-- **No heavy dependencies** — charts are custom-painted; deps are just `provider` + `shared_preferences`
+- **No heavy dependencies** — map and all charts are custom-painted; deps are just `provider` + `shared_preferences`
 
 ## Download
 
@@ -111,18 +125,19 @@ Requires Flutter 3.47.x stable. Desktop builds need the usual platform toolchain
 ```
 lib/
 ├── main.dart               # entry point
-├── app.dart                # MaterialApp + adaptive shell
+├── app.dart                # MaterialApp + adaptive shell (9 modules)
 ├── core/
-│   ├── models.dart         # Task / Note / AppSettings + JSON
-│   ├── app_state.dart      # ChangeNotifier store + persistence + stats
-│   ├── theme.dart          # compact design system (K tokens)
-│   └── seed.dart           # first-run demo content
+│   ├── models.dart         # Vehicle / Driver / Trip / Alert / Maintenance / FuelEvent / Geofence…
+│   ├── fleet_state.dart    # live telematics simulation + persistence + analytics
+│   ├── theme.dart          # Kompact compact design system (K tokens, light/dark)
+│   └── seed.dart           # seeded demo fleet (14 vehicles, 10 drivers, dispatches…)
 ├── ui/
-│   ├── adaptive_scaffold.dart  # rail (wide) ↔ bottom bar (narrow)
-│   ├── widgets.dart        # cards, chips, counters, headers…
-│   ├── charts.dart         # custom-painted bars, donut, sparkline, heatmap
-│   └── task_widgets.dart   # task tile + editor dialog
-└── screens/                # dashboard, tasks, notes, insights, settings
+│   ├── adaptive_scaffold.dart  # rail (wide) ↔ bottom bar + More (narrow)
+│   ├── widgets.dart        # cards, chips, KPI tiles, gauges rows, fact grids…
+│   ├── charts.dart         # custom-painted sparkline, bars, donut, gauge, heatmap
+│   └── map_painter.dart    # live city map: roads, geofences, routes, vehicles
+└── screens/                # dashboard, fleet, tracking, drivers, alerts,
+                            # maintenance, fuel, insights, settings + details
 ```
 
 ## License
