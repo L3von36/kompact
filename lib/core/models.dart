@@ -1,9 +1,22 @@
-import 'dart:ui';
+import 'package:flutter/material.dart';
 
 /// ── Enums ──────────────────────────────────────────────────────────────────
 
 /// Vehicle condition ladder used across the remote dashboard (guide p. 26).
 enum VehicleCondition { good, satisfactory, urgent, critical }
+
+/// Operator personas served by the FMS. Each role gets a dedicated
+/// dashboard and a role-filtered navigation set — the same telematics
+/// pipeline, framed for the decisions that role actually makes.
+enum FleetRole {
+  ops,
+  dispatcher,
+  driver,
+  maintenance,
+  safety,
+  finance,
+  executive,
+}
 
 /// Live operational status of a vehicle.
 enum VehicleStatus { onRoute, idle, maintenance, offline }
@@ -40,6 +53,69 @@ enum TripStatus { planned, enRoute, atRisk, delivered }
 enum EldStatus { connected, syncing, error }
 
 /// ── Extensions ─────────────────────────────────────────────────────────────
+
+extension FleetRoleX on FleetRole {
+  /// Long display name of the persona.
+  String get label => switch (this) {
+        FleetRole.ops => 'Fleet Manager',
+        FleetRole.dispatcher => 'Dispatcher',
+        FleetRole.driver => 'Driver',
+        FleetRole.maintenance => 'Maintenance Manager',
+        FleetRole.safety => 'Safety & Compliance',
+        FleetRole.finance => 'Finance & Admin',
+        FleetRole.executive => 'Executive',
+      };
+
+  /// Short chip label used where horizontal space is scarce.
+  String get shortLabel => switch (this) {
+        FleetRole.ops => 'Ops',
+        FleetRole.dispatcher => 'Dispatch',
+        FleetRole.driver => 'Driver',
+        FleetRole.maintenance => 'Shop',
+        FleetRole.safety => 'Safety',
+        FleetRole.finance => 'Finance',
+        FleetRole.executive => 'Exec',
+      };
+
+  /// Demo operator identity for the role workspace.
+  String get demoUser => switch (this) {
+        FleetRole.ops => 'Dana Whitfield',
+        FleetRole.dispatcher => 'Ray Kowalski',
+        FleetRole.driver => 'Derrick Reyes',
+        FleetRole.maintenance => 'Sam Okafor',
+        FleetRole.safety => 'Priya Sharma',
+        FleetRole.finance => 'Elena Marsh',
+        FleetRole.executive => 'J. Abernathy',
+      };
+
+  /// One-line summary of what this role's dashboard optimizes for.
+  String get mandate => switch (this) {
+        FleetRole.ops =>
+          'Total fleet oversight — utilization, condition, alerts and dispatch health in one board.',
+        FleetRole.dispatcher =>
+          'Assign drivers to loads, watch ETAs and keep every vehicle earning.',
+        FleetRole.driver =>
+          'Your vehicle, your trip, your hours — everything needed for a compliant shift.',
+        FleetRole.maintenance =>
+          'Predictive work orders, vehicle health ranking and shop throughput.',
+        FleetRole.safety =>
+          'Driver behavior, HOS compliance, violations and incident exposure.',
+        FleetRole.finance =>
+          'Fuel spend, cost per kilometer, maintenance exposure and tax estimates.',
+        FleetRole.executive =>
+          'Fleet performance, cost trends and green-initiative progress at a glance.',
+      };
+
+  IconData get icon => switch (this) {
+        FleetRole.ops => Icons.space_dashboard_rounded,
+        FleetRole.dispatcher => Icons.alt_route_rounded,
+        FleetRole.driver => Icons.person_rounded,
+        FleetRole.maintenance => Icons.build_rounded,
+        FleetRole.safety => Icons.health_and_safety_rounded,
+        FleetRole.finance => Icons.payments_rounded,
+        FleetRole.executive => Icons.insights_rounded,
+      };
+}
 
 extension VehicleConditionX on VehicleCondition {
   String get label => switch (this) {
@@ -728,6 +804,7 @@ class AppSettings {
   int themeModeIndex; // 0 system, 1 light, 2 dark
   int accentIndex; // 0 blue, 1 indigo, 2 teal
   int densityIndex; // 0 compact, 1 comfortable
+  int roleIndex; // active FleetRole workspace
   bool useMetric;
   bool alertsEnabled;
   bool simRunning;
@@ -737,26 +814,34 @@ class AppSettings {
     this.themeModeIndex = 0,
     this.accentIndex = 0,
     this.densityIndex = 0,
+    this.roleIndex = 0,
     this.useMetric = true,
     this.alertsEnabled = true,
     this.simRunning = true,
     this.simSpeed = 1.0,
   });
 
-  factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
-        themeModeIndex: j['theme'] as int? ?? 0,
-        accentIndex: j['accent'] as int? ?? 0,
-        densityIndex: j['density'] as int? ?? 0,
-        useMetric: j['metric'] as bool? ?? true,
-        alertsEnabled: j['alerts'] as bool? ?? true,
-        simRunning: j['sim'] as bool? ?? true,
-        simSpeed: (j['simspd'] as num?)?.toDouble() ?? 1.0,
-      );
+  factory AppSettings.fromJson(Map<String, dynamic> j) {
+    final roleIdx = j['role'] as int? ?? 0;
+    return AppSettings(
+      themeModeIndex: j['theme'] as int? ?? 0,
+      accentIndex: j['accent'] as int? ?? 0,
+      densityIndex: j['density'] as int? ?? 0,
+      // Unknown role indexes (e.g. from a newer build) fall back to Ops.
+      roleIndex:
+          roleIdx >= 0 && roleIdx < FleetRole.values.length ? roleIdx : 0,
+      useMetric: j['metric'] as bool? ?? true,
+      alertsEnabled: j['alerts'] as bool? ?? true,
+      simRunning: j['sim'] as bool? ?? true,
+      simSpeed: (j['simspd'] as num?)?.toDouble() ?? 1.0,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'theme': themeModeIndex,
         'accent': accentIndex,
         'density': densityIndex,
+        'role': roleIndex,
         'metric': useMetric,
         'alerts': alertsEnabled,
         'sim': simRunning,

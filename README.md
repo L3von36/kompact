@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A compact-design fleet management system.</strong><br>
-  Live tracking, drivers, fuel, predictive maintenance, safety & compliance — built with Flutter for 6 targets from one codebase.
+  7 role-based dashboards · live tracking · drivers · fuel · predictive maintenance · safety & compliance — built with Flutter for 6 targets from one codebase.
 </p>
 
 <p align="center">
@@ -23,6 +23,36 @@ Implements the must-have feature set from the fleet-management playbook —
 fleet safety & compliance* — on a live-simulated telematics pipeline with an
 emphasis on emerging tech (IoT sensors, AI predictions, geofencing/spatial ops,
 remote dashboards).
+
+## Role-based workspaces
+
+The same live telematics pipeline, framed for the decisions each role actually
+makes. Switch workspace from the sidebar identity card (or `?role=driver` in
+the web URL) — the dashboard, modules and navigation all follow the persona.
+
+| Role | Dashboard optimizes for |
+|---|---|
+| **Fleet Manager** (Ops) | Total oversight — utilization, condition mix, alert feed, dispatch health, live map |
+| **Dispatcher** | Load board with ETAs & at-risk flags, ready-to-dispatch vehicles with one-tap DISPATCH, driver availability with HOS remaining |
+| **Driver** | Personal cockpit — current trip, HOS clocks (11h day / 70h cycle), vehicle vitals, DVIR pre-trip checklist, eco coaching |
+| **Maintenance Manager** | Work-order pipeline (predicted → scheduled → in shop) with actions, worst-first health triage, active DTC codes, preventive vs corrective mix |
+| **Safety & Compliance** | Driver safety leaderboard, 30-day behavior breakdown, HOS at-risk drivers, ELD connectivity, violation register with fines exposure |
+| **Finance & Admin** | Fuel spend trend, cost structure, $/km blended, maintenance exposure, idle waste, IFTA quarterly estimate |
+| **Executive** | Utilization heatmap, on-time delivery, cost & CO2 trends, fleet mix, strategic focus (retention / green / cost control) |
+
+| Dispatcher | Driver cockpit |
+|---|---|
+| <img src="docs/screenshots/17-dispatcher.png" width="440"> | <img src="docs/screenshots/18-driver.png" width="440"> |
+| **Shop overview** | **Safety & compliance** |
+| <img src="docs/screenshots/19-maintenance.png" width="440"> | <img src="docs/screenshots/20-safety.png" width="440"> |
+| **Cost center** | **Executive overview** |
+| <img src="docs/screenshots/21-finance.png" width="440"> | <img src="docs/screenshots/22-executive.png" width="440"> |
+
+<details>
+<summary>Driver workspace on mobile</summary>
+
+<img src="docs/screenshots/23-mobile-driver.png" width="240">
+</details>
 
 ## The compact design system
 
@@ -61,7 +91,8 @@ dense, information-rich console:
 
 ## Features
 
-- **Dashboard** — live KPIs (on-route, alerts, safety, fuel, CO2, utilization), condition donut, real-time alert feed, active dispatches with ETAs, fleet speed stream
+- **7 role dashboards** — every persona (ops, dispatcher, driver, maintenance, safety, finance, executive) gets a dedicated board over the same live data; role-filtered navigation keeps each workspace focused
+- **Dashboard (Ops)** — live KPIs (on-route, alerts, safety, fuel, CO2, utilization), condition donut, real-time alert feed, active dispatches with ETAs, fleet speed stream
 - **Fleet** — dense inventory grid with status/type filters; per-vehicle detail with **live telemetry gauges** (speed, fuel, engine temp), **IoT sensor panel** (cargo temp, humidity, TPMS, battery, camera, RFID), DTC diagnostics, predictive service, fuel history, refuel planning via closest-point
 - **Live tracking** — custom-painted city map: moving vehicle markers with heading, geofence zones, station landmarks, traveled-route rendering, at-risk highlighting, ETA supervision
 - **Drivers** — safety/eco/HOS scorecards, ELD status, behavior (harsh braking/accel, speeding, seatbelt), violations & fines, performance reports
@@ -124,20 +155,28 @@ Requires Flutter 3.47.x stable. Desktop builds need the usual platform toolchain
 
 ```
 lib/
-├── main.dart               # entry point
-├── app.dart                # MaterialApp + adaptive shell (9 modules)
+├── main.dart               # entry point (+ ?role= deep link)
+├── app.dart                # MaterialApp + role-filtered adaptive shell
 ├── core/
-│   ├── models.dart         # Vehicle / Driver / Trip / Alert / Maintenance / FuelEvent / Geofence…
-│   ├── fleet_state.dart    # live telematics simulation + persistence + analytics
+│   ├── models.dart         # Vehicle / Driver / Trip / Alert / Maintenance / FleetRole…
+│   ├── fleet_state.dart    # live telematics simulation + persistence + role state
 │   ├── theme.dart          # Kompact compact design system (K tokens, light/dark)
 │   └── seed.dart           # seeded demo fleet (14 vehicles, 10 drivers, dispatches…)
 ├── ui/
-│   ├── adaptive_scaffold.dart  # rail (wide) ↔ bottom bar + More (narrow)
+│   ├── adaptive_scaffold.dart  # rail (wide) ↔ bottom bar + More (narrow);
+│   │                           # identity card, grouped sections, badges, live strip
+│   ├── role_picker.dart    # workspace switcher (dialog/sheet) + RoleSwitchChip
 │   ├── widgets.dart        # cards, chips, KPI tiles, gauges rows, fact grids…
 │   ├── charts.dart         # custom-painted sparkline, bars, donut, gauge, heatmap
 │   └── map_painter.dart    # live city map: roads, geofences, routes, vehicles
-└── screens/                # dashboard, fleet, tracking, drivers, alerts,
-                            # maintenance, fuel, insights, settings + details
+└── screens/
+    ├── dashboard_screen.dart   # role router
+    ├── dashboards/             # 7 role workspaces
+    │   ├── ops_dashboard.dart  ├── dispatcher_dashboard.dart
+    │   ├── driver_dashboard.dart  ├── maintenance_dashboard.dart
+    │   ├── safety_dashboard.dart  ├── finance_dashboard.dart
+    │   └── exec_dashboard.dart
+    └── fleet, tracking, drivers, alerts, maintenance, fuel, insights, settings
 ```
 
 ## License

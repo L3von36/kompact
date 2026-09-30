@@ -28,6 +28,48 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Workspace (role).
+              KCard(
+                padding: const EdgeInsets.all(K.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SectionHeader(
+                      title: 'Workspace',
+                      eyebrow: 'Role-based dashboards',
+                      action: Text(
+                        state.role.demoUser,
+                        style: TextStyle(
+                          fontSize: K.caption,
+                          fontWeight: FontWeight.w700,
+                          color: roleColor(context, state.role),
+                          fontFamily: 'Inter',
+                        ),
+                      ),
+                    ),
+                    Wrap(
+                      spacing: K.xs,
+                      runSpacing: K.xs,
+                      children: [
+                        for (final r in FleetRole.values)
+                          _roleChip(context, state, r),
+                      ],
+                    ),
+                    const SizedBox(height: K.xs + 1),
+                    Text(
+                      state.role.mandate,
+                      style: TextStyle(
+                        fontSize: K.caption,
+                        height: 1.35,
+                        color: p.textTertiary,
+                        fontFamily: 'Inter',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: K.md),
+
               // Appearance.
               KCard(
                 padding: const EdgeInsets.all(K.md),
@@ -46,6 +88,7 @@ class SettingsScreen extends StatelessWidget {
                             themeModeIndex: v,
                             accentIndex: s.accentIndex,
                             densityIndex: s.densityIndex,
+                            roleIndex: s.roleIndex,
                             useMetric: s.useMetric,
                             alertsEnabled: s.alertsEnabled,
                             simRunning: s.simRunning,
@@ -66,6 +109,7 @@ class SettingsScreen extends StatelessWidget {
                             themeModeIndex: s.themeModeIndex,
                             accentIndex: v,
                             densityIndex: s.densityIndex,
+                            roleIndex: s.roleIndex,
                             useMetric: s.useMetric,
                             alertsEnabled: s.alertsEnabled,
                             simRunning: s.simRunning,
@@ -141,6 +185,7 @@ class SettingsScreen extends StatelessWidget {
                             themeModeIndex: s.themeModeIndex,
                             accentIndex: s.accentIndex,
                             densityIndex: s.densityIndex,
+                            roleIndex: s.roleIndex,
                             useMetric: s.useMetric,
                             alertsEnabled: v,
                             simRunning: s.simRunning,
@@ -198,13 +243,14 @@ class SettingsScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SectionHeader(title: 'About', eyebrow: 'Kompact FMS'),
-                    const MetricRow(label: 'Version', value: '2.0.0'),
+                    const MetricRow(label: 'Version', value: '2.1.0'),
                     const MetricRow(label: 'Design system', value: 'Kompact · compact design'),
+                    const MetricRow(label: 'Workspaces', value: 'Ops · Dispatch · Driver · Shop · Safety · Finance · Exec'),
                     const MetricRow(label: 'Platforms', value: 'Android · iOS · Web · Windows · macOS · Linux'),
                     const MetricRow(label: 'Data', value: 'Local demo telemetry (no network)'),
                     const SizedBox(height: K.sm),
                     Text(
-                      'Kompact is a compact-design fleet management system: driver management, routing and tracking, fuel management, predictive maintenance and fleet safety & compliance — in the densest usable layout.',
+                      'Kompact is a compact-design fleet management system: driver management, routing and tracking, fuel management, predictive maintenance and fleet safety & compliance — in the densest usable layout, with a dedicated dashboard for every role in the operation.',
                       style: TextStyle(
                         fontSize: K.body,
                         height: 1.45,
@@ -219,6 +265,40 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _roleChip(BuildContext context, AppState state, FleetRole r) {
+    final p = context.pal;
+    final selected = r == state.role;
+    final color = roleColor(context, r);
+    return Material(
+      color: selected ? color : p.surfaceAlt,
+      borderRadius: BorderRadius.circular(K.rSm),
+      child: InkWell(
+        onTap: () => state.setRole(r),
+        borderRadius: BorderRadius.circular(K.rSm),
+        hoverColor: p.surfaceSunken,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: K.sm + 2, vertical: K.xs + 1),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(r.icon, size: 12, color: selected ? Colors.white : p.textSecondary),
+              const SizedBox(width: K.xs + 1),
+              Text(
+                r.shortLabel,
+                style: TextStyle(
+                  fontSize: K.label,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? Colors.white : p.textSecondary,
+                  fontFamily: 'Inter',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

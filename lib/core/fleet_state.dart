@@ -18,6 +18,9 @@ class AppState extends ChangeNotifier {
 
   static const _storageKey = 'kompact_fms_v2';
 
+  /// Optional workspace deep link (`?role=driver`), consumed once at load.
+  static FleetRole? startupRoleOverride;
+
   // ── Data ─────────────────────────────────────────────────────────────────
   late List<Vehicle> vehicles;
   late List<Driver> drivers;
@@ -64,6 +67,14 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       _installSeed();
     }
+
+    // Apply the ?role= deep link after settings have settled.
+    final override = startupRoleOverride;
+    if (override != null) {
+      settings.roleIndex = override.index;
+      startupRoleOverride = null;
+    }
+
     loaded = true;
     _startTimer();
     notifyListeners();
@@ -171,6 +182,141 @@ class AppState extends ChangeNotifier {
     _persist();
     notifyListeners();
   }
+
+  // ── Role workspace ────────────────────────────────────────────────
+
+  /// Active operator persona. Every role sees a different dashboard and a
+  /// role-filtered navigation set over the same telematics pipeline.
+  FleetRole get role =>
+      FleetRole.values[settings.roleIndex.clamp(0, FleetRole.values.length - 1)];
+
+  void setRole(FleetRole next) {
+    if (next == role) return;
+    settings.roleIndex = next.index;
+    _persist();
+    notifyListeners();
+  }
+
+  /// Driver identity used by the driver workspace. Prefers a driver
+  /// currently hauling a load so the cockpit has a live trip to show.
+  Driver get demoDriver {
+    Driver? best;
+    for (final v in vehicles) {
+      if (v.status == VehicleStatus.onRoute && v.driverId != null) {
+        final d = driverById(v.driverId);
+        if (d != null) {
+          best = d;
+          break;
+        }
+      }
+    }
+    return best ?? drivers.first;
+  }
+
+  Vehicle? get demoDriverVehicle =>
+      vehicles.where((v) => v.driverId == demoDriver.id).firstOrNull;
+
+  Trip? get demoDriverTrip {
+    final v = demoDriverVehicle;
+    return v == null ? null : tripForVehicle(v.id);
+  }
+
+  /// Public dispatcher action: put an idle vehicle back to work.
+  void dispatchVehicle(String vehicleId) {
+    final v = vehicles.where((x) => x.id == vehicleId).firstOrNull;
+    if (v == null) return;
+    if (v.status != VehicleStatus.idle) return;
+    _dispatchNewTrip(v);
+  }
+
+  /// Open (non-completed) maintenance items, most urgent first.
+  List<MaintenanceItem> get openMaintenance => [
+        ...maintenance.where((m) => m.status != MaintenanceStatus.completed)
+      ]..sort((a, b) {
+          int r(MaintenanceStatus s) => switch (s) {
+                MaintenanceStatus.predicted => 0,
+                MaintenanceStatus.scheduled => 1,
+                MaintenanceStatus.inProgress => 2,
+                MaintenanceStatus.completed => 3,
+              };
+          final byStatus = r(a.status).compareTo(r(b.status));
+          if (byStatus != 0) return byStatus;
+          return a.dueInKm.compareTo(b.dueInKm);
+        });
+
+  int get predictedMaintenanceCount => maintenance
+      .where((m) => m.status == MaintenanceStatus.predicted)
+      .length;
+
+  /// Vehicles ranked worst-first by condition then active DTCs — the shop's
+  /// triage list.
+  List<Vehicle> get healthRanking => [...vehicles]..sort((a, b) {
+        final byCondition = a.condition.rank.compareTo(b.condition.rank);
+        if (byCondition != 0) return -byCondition;
+        final aDtc = a.hasActiveDtc ? 1 : 0;
+        final bDtc = b.hasActiveDtc ? 1 : 0;
+        return -aDtc.compareTo(bDtc);
+      });
+
+  // ── Finance analytics ───────────────────────────────────────────────
+
+  /// Maintenance spend per day for the last [days] days (oldest → newest),
+  /// aggregated from completed work orders.
+  List<double> maintenanceCostPerDay(int days) {
+    final now = DateTime.now();
+    final out = List.filled(days, 0.0);
+    for (final m in maintenance) {
+      final d = m.dueDate;
+      if (d == null || m.status != MaintenanceStatus.completed) continue;
+      final age = DateTime(now.year, now.month, now.day)
+          .difference(DateTime(d.year, d.month, d.day))
+          .inDays;
+      if (age >= 0 && age < days) out[days - 1 - age] += m.costEstUsd;
+    }
+    return out;
+  }
+
+  /// Blended operating cost per kilometer over the last 30 days
+  /// (fuel + open maintenance exposure vs. distance covered).
+  double get costPerKm {
+    final km = vehicles.fold(0.0, (s, v) => s + v.odometerKm);
+    if (km <= 0) return 0;
+    return (fuelCost30d + openMaintenanceCost) / km;
+  }
+
+  /// Sum of traffic fines attached to driver violation records.
+  double get finesExposure => drivers.fold(0, (s, d) => s + d.violations.fold(0, (s2, v) => s2 + v.fineUsd));
+
+  /// Behavior events across the roster in the trailing 30 days.
+  int get harshEvents30d => drivers.fold(
+      0,
+      (s, d) =>
+          s + d.behavior.harshBraking30d + d.behavior.harshAccel30d + d.behavior.speeding30d + d.behavior.seatbeltViolations30d);
+
+  /// ELD connectivity health across the roster.
+  int get eldErrorCount => drivers.where((d) => d.eldStatus == EldStatus.error).length;
+
+  /// Drivers approaching their 70h/8day cycle limit.
+  int get hosRiskCount => drivers.where((d) => d.hosRisk).length;
+
+  /// Vehicles currently available for dispatch (idle + fueled + healthy).
+  List<Vehicle> get dispatchableVehicles => vehicles
+      .where((v) =>
+          v.status == VehicleStatus.idle &&
+          v.condition != VehicleCondition.critical)
+      .toList();
+
+  /// Drivers currently available (not on a route, hours remaining).
+  List<Driver> get availableDrivers => drivers
+      .where((d) =>
+          vehicles.every((v) => v.driverId != d.id || v.status != VehicleStatus.onRoute) &&
+          !d.hosRisk)
+      .toList()
+    ..sort((a, b) => b.hosRemaining.compareTo(a.hosRemaining));
+
+  /// Trips flagged at-risk of missing their delivery window.
+  List<Trip> get atRiskTrips =>
+      trips.where((t) => t.status == TripStatus.atRisk).toList();
 
   // ── Simulation tick ──────────────────────────────────────────────────────
 

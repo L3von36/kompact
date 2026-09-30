@@ -208,6 +208,19 @@ Color statusColor(BuildContext c, VehicleStatus v) => switch (v) {
       VehicleStatus.offline => c.pal.textTertiary,
     };
 
+/// Role identity color, resolved against the active palette so both
+/// brightness modes stay legible (never color alone — role chips always
+/// pair the hue with a text label).
+Color roleColor(BuildContext c, FleetRole r) => switch (r) {
+      FleetRole.ops => c.pal.primary,
+      FleetRole.dispatcher => c.pal.satisfactory,
+      FleetRole.driver => c.pal.good,
+      FleetRole.maintenance => c.pal.urgent,
+      FleetRole.safety => c.pal.critical,
+      FleetRole.finance => c.pal.accent,
+      FleetRole.executive => c.pal.info,
+    };
+
 /// Dense status chip — color + optional dot + label (never color alone).
 class StatusChip extends StatelessWidget {
   final String label;
@@ -453,7 +466,16 @@ class MetricRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (trailing != null) ...[const SizedBox(width: K.xs), trailing!],
+          if (trailing != null) ...[
+            const SizedBox(width: K.xs),
+            // Rows size non-flex children with unbounded main-axis
+            // constraints (intrinsic sizing). Text copes; expanding widgets
+            // like LinearProgressIndicator do not. Bound the slot.
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: trailing!,
+            ),
+          ],
         ],
       ),
     );
