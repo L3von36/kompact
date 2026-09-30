@@ -1,0 +1,319 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.5
+
+jobs:
+  # ------------------------------------------------------------------ quality
+  quality:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  # ----------------------------------------------------------------- android
+  build-android:
+    name: Android (APK + AAB)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build APK (universal)
+        run: flutter build apk --release
+
+      - name: Build AAB (Play Store)
+        run: flutter build appbundle --release
+
+      - name: Stage artifacts
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk "kompact-${VERSION}-android-universal.apk"
+          mv build/app/outputs/bundle/release/app-release.aab "kompact-${VERSION}-android-play.aab"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            kompact-*-android-universal.apk
+            kompact-*-android-play.aab
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------- ios
+  build-ios:
+    name: iOS (unsigned IPA)
+    runs-on: macos-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r -q "kompact-${VERSION}-ios-unsigned.ipa" Payload
+          rm -rf Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: kompact-*-ios-unsigned.ipa
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------- linux
+  build-linux:
+    name: Linux (x64)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev pkg-config
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package
+        run: |
+          cd build/linux/x64/release
+          zip -r -q "${GITHUB_WORKSPACE}/kompact-${VERSION}-linux-x64.zip" bundle
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: kompact-*-linux-x64.zip
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------- windows
+  build-windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        shell: bash
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "kompact-${env:VERSION}-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: kompact-*-windows-x64.zip
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------- macos
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package (.app bundle, symlinks preserved)
+        run: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent kompact.app "${GITHUB_WORKSPACE}/kompact-${VERSION}-macos.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: kompact-*-macos.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------- web
+  build-web:
+    name: Web
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Build Web
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      - name: Package
+        run: zip -r -q "kompact-${VERSION}-web.zip" build/web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-zip
+          path: kompact-*-web.zip
+          if-no-files-found: error
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  # ------------------------------------------------------------------ pages
+  deploy-pages:
+    name: Deploy Web to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build-web
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ---------------------------------------------------------------- release
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-android, build-ios, build-linux, build-windows, build-macos, build-web]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        run: |
+          echo "VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d '+' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}-b${{ github.run_number }}
+          name: Kompact v${{ env.VERSION }} (build ${{ github.run_number }})
+          body: |
+            **Kompact — compact-design productivity suite**
+
+            Every push to `main` builds all six targets and attaches them here.
+
+            | Artifact | Platform | Install |
+            |---|---|---|
+            | `*-android-universal.apk` | Android | Sideload directly |
+            | `*-android-play.aab` | Android | Play Store bundle |
+            | `*-ios-unsigned.ipa` | iOS | Sign with your own certificate (AltStore / Sideloadly / Xcode) |
+            | `*-linux-x64.zip` | Linux | Unzip → `bundle/kompact` |
+            | `*-windows-x64.zip` | Windows | Unzip → `kompact.exe` |
+            | `*-macos.zip` | macOS | Unzip → right-click → Open |
+            | `*-web.zip` | Web | Static hosting, or use the Pages URL |
+
+            🌐 **Live web build:** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          files: dist/**
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
